@@ -66,6 +66,33 @@ export type FetchEmployeeCheckInsResult = {
   totalCount: number;
 };
 
+export type EmployeeOption = { id: string; fullName: string; email: string | null };
+
+export async function fetchEmployeeOptions(): Promise<EmployeeOption[]> {
+  const { data, error } = await supabase.from("profiles")
+    .select("id, full_name, first_name, last_name, email")
+    .eq("role", "employee").order("full_name");
+  if (error) throw new Error("Unable to load employee profiles.");
+  return (data ?? []).map((p) => ({
+    id: p.id,
+    fullName: p.full_name || [p.first_name, p.last_name].filter(Boolean).join(" ") || "Employee",
+    email: p.email ?? null,
+  }));
+}
+
+export async function fetchIndividualCheckIns(userId: string, fromDate: string, toDate: string): Promise<EmployeeCheckInRow[]> {
+  const { data, error } = await supabase.from("check_ins")
+    .select("id, user_id, checkin_date, mood, energy, workload, requested_support, sentiment_score")
+    .eq("user_id", userId).gte("checkin_date", fromDate).lte("checkin_date", toDate)
+    .order("checkin_date", { ascending: true }).order("created_at", { ascending: true });
+  if (error) throw new Error("Unable to load this employee's check-ins.");
+  return (data ?? []).map((r) => ({
+    checkInId: r.id, userId: r.user_id, fullName: "", email: null, checkInDate: r.checkin_date,
+    mood: r.mood, energy: r.energy, workload: r.workload, requestedSupport: r.requested_support,
+    sentimentScore: r.sentiment_score,
+  }));
+}
+
 // ─── Fetch paginated employee check-ins ──────────────────────────────────────
 
 /**

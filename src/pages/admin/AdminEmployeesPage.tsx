@@ -11,15 +11,19 @@ import {
   AlertCircle,
   SearchX,
   Loader2,
+  Search,
 } from "lucide-react";
 import {
   fetchEmployeeCheckIns,
   fetchEmployeeSummary,
+  fetchEmployeeOptions,
+  fetchIndividualCheckIns,
   MOOD_LABELS,
   ENERGY_LABELS,
   WORKLOAD_LABELS,
   type EmployeeCheckInRow,
   type EmployeeSummary,
+  type EmployeeOption,
 } from "../../features/admin/adminEmployeesService";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -96,6 +100,48 @@ function AnswerBadge({
 // ─── Page component ───────────────────────────────────────────────────────────
 
 export function AdminEmployeesPage() {
+  const [employeeOptions, setEmployeeOptions] = useState<EmployeeOption[]>([]);
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
+  const [numberOfDays, setNumberOfDays] = useState("7");
+  const [analysisFrom, setAnalysisFrom] = useState(() => offsetISO(6));
+  const [analysisTo, setAnalysisTo] = useState(() => todayISO());
+  const [customAnalysis, setCustomAnalysis] = useState(false);
+  const [individualRows, setIndividualRows] = useState<EmployeeCheckInRow[]>([]);
+  const [individualLoading, setIndividualLoading] = useState(false);
+  const [individualError, setIndividualError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void fetchEmployeeOptions().then(setEmployeeOptions).catch((err) => setIndividualError(err.message));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedEmployeeId) { setIndividualRows([]); return; }
+    let active = true;
+    setIndividualLoading(true);
+    setIndividualError(null);
+    void fetchIndividualCheckIns(selectedEmployeeId, analysisFrom, analysisTo)
+      .then((records) => { if (active) setIndividualRows(records); })
+      .catch((err) => { if (active) setIndividualError(err instanceof Error ? err.message : "Unable to load employee analysis."); })
+      .finally(() => { if (active) setIndividualLoading(false); });
+    return () => { active = false; };
+  }, [selectedEmployeeId, analysisFrom, analysisTo]);
+
+  const matchingEmployees = employeeOptions.filter((employee) =>
+    `${employee.fullName} ${employee.email ?? ""}`.toLowerCase().includes(employeeSearch.toLowerCase()),
+  );
+  const scoredIndividualRows = individualRows.filter((row) => row.sentimentScore !== null && Number.isFinite(row.sentimentScore));
+  const individualAverage = scoredIndividualRows.length
+    ? Math.round(scoredIndividualRows.reduce((sum, row) => sum + (row.sentimentScore ?? 0), 0) / scoredIndividualRows.length)
+    : null;
+  const individualScores = scoredIndividualRows.map((row) => row.sentimentScore as number);
+  const individualTrend = individualRows.reduce<{ date: string; score: number; count: number }[]>((days, row) => {
+    if (row.sentimentScore === null) return days;
+    const day = days.find((item) => item.date === row.checkInDate);
+    if (day) { day.score = Math.round((day.score * day.count + row.sentimentScore) / (day.count + 1)); day.count += 1; }
+    else days.push({ date: row.checkInDate, score: row.sentimentScore, count: 1 });
+    return days;
+  }, []);
   // ── Filter state ────────────────────────────────────────────────────────────
   const [quickRange, setQuickRange] = useState<QuickRange>("");
   const [fromDate, setFromDate] = useState<string>("");
@@ -214,6 +260,47 @@ export function AdminEmployeesPage() {
       </header>
 
       <div className="admin-content">
+        <section className="admin-section">
+          <div className="admin-section-header"><h2 className="admin-section-title">Individual Employee Analysis</h2></div>
+          <div className="admin-panel emp-filter-panel">
+            <div className="emp-date-inputs">
+              <div className="emp-date-field">
+                <label htmlFor="employee-search" className="emp-date-label"><Search size={14} /> Search employee</label>
+                <input id="employee-search" className="emp-date-input" placeholder="Name or email" value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} />
+              </div>
+              <div className="emp-date-field">
+                <label htmlFor="employee-select" className="emp-date-label">Selected Employee</label>
+                <select id="employee-select" className="emp-date-input" value={selectedEmployeeId} onChange={(event) => setSelectedEmployeeId(event.target.value)}>
+                  <option value="">Select an employee</option>
+                  {matchingEmployees.map((employee) => <option key={employee.id} value={employee.id}>{employee.fullName}{employee.email ? ` — ${employee.email}` : ""}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="emp-quick-ranges" style={{ marginTop: 16 }}>
+              <button className={`emp-range-btn ${!customAnalysis ? "active" : ""}`} onClick={() => setCustomAnalysis(false)}>Number of Days</button>
+              <button className={`emp-range-btn ${customAnalysis ? "active" : ""}`} onClick={() => setCustomAnalysis(true)}>Custom Date Range</button>
+            </div>
+            {!customAnalysis ? <div className="emp-date-inputs">
+              <div className="emp-date-field"><label htmlFor="analysis-days" className="emp-date-label">Number of Days</label><input id="analysis-days" type="number" min="1" step="1" className="emp-date-input" value={numberOfDays} onChange={(event) => setNumberOfDays(event.target.value)} /></div>
+              <div className="emp-filter-actions"><button className="secondary-button emp-apply-btn" disabled={!selectedEmployeeId || !/^\\d+$/.test(numberOfDays) || Number(numberOfDays) < 1 || individualLoading} onClick={() => { const days = Number(numberOfDays); setAnalysisFrom(offsetISO(days - 1)); setAnalysisTo(todayISO()); }}>Apply</button></div>
+            </div> : <div className="emp-date-inputs">
+              <div className="emp-date-field"><label htmlFor="individual-from" className="emp-date-label">From Date</label><input id="individual-from" type="date" className="emp-date-input" value={analysisFrom} max={analysisTo || todayISO()} onChange={(event) => setAnalysisFrom(event.target.value)} /></div>
+              <div className="emp-date-field"><label htmlFor="individual-to" className="emp-date-label">To Date</label><input id="individual-to" type="date" className="emp-date-input" value={analysisTo} min={analysisFrom} max={todayISO()} onChange={(event) => setAnalysisTo(event.target.value)} /></div>
+            </div>}
+            {selectedEmployeeId && <>
+              <div className="kpi-grid" style={{ marginTop: 20 }}>
+                <div className="kpi-card"><span className="kpi-title">Average Sentiment</span><span className="kpi-value">{individualAverage === null ? "—" : `${individualAverage}%`}</span><div className="kpi-change neutral">Across actual scored check-ins</div></div>
+                <div className="kpi-card"><span className="kpi-title">Check-ins</span><span className="kpi-value">{individualRows.length}</span><div className="kpi-change neutral">In selected period</div></div>
+                <div className="kpi-card"><span className="kpi-title">Lowest Sentiment</span><span className="kpi-value">{individualScores.length ? `${Math.min(...individualScores)}%` : "—"}</span></div>
+                <div className="kpi-card"><span className="kpi-title">Highest Sentiment</span><span className="kpi-value">{individualScores.length ? `${Math.max(...individualScores)}%` : "—"}</span></div>
+              </div>
+              <div className="admin-section-header" style={{ marginTop: 24 }}><h3 className="admin-section-title">Sentiment Trend</h3><span className="emp-record-count">Latest: {individualScores.length ? `${individualScores[individualScores.length - 1]}%` : "—"}</span></div>
+              {individualLoading ? <p>Loading employee analysis…</p> : individualError ? <p role="alert">{individualError}</p> : individualTrend.length ? <div style={{ height: 240, margin: "24px 12px 32px" }}><svg viewBox={`0 0 ${Math.max(800, individualTrend.length * 40)} 240`} preserveAspectRatio="none" style={{ width: "100%", height: "100%" }} aria-label="Employee sentiment trend"><polyline fill="none" stroke="var(--primary)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" points={individualTrend.map((point, index) => `${index * (Math.max(800, individualTrend.length * 40) / Math.max(1, individualTrend.length - 1))},${240 - point.score * 2.2}`).join(" ")} /></svg></div> : <p>No scored check-ins in this period.</p>}
+              <div className="admin-section-header"><h3 className="admin-section-title">Individual Check-in History</h3></div>
+              {individualRows.length > 0 && <div className="emp-table-scroll"><table className="emp-table" aria-label="Individual employee check-in history"><thead><tr><th className="emp-th">Date</th><th className="emp-th">Mood</th><th className="emp-th">Energy</th><th className="emp-th">Work Pressure</th><th className="emp-th">Leadership Request</th><th className="emp-th">Sentiment</th></tr></thead><tbody>{[...individualRows].reverse().map((row) => <tr key={row.checkInId}><td className="emp-td">{formatDate(row.checkInDate)}</td><td className="emp-td"><AnswerBadge label={MOOD_LABELS[row.mood] ?? String(row.mood)} type="mood" /></td><td className="emp-td"><AnswerBadge label={ENERGY_LABELS[row.energy] ?? String(row.energy)} type="energy" /></td><td className="emp-td"><AnswerBadge label={WORKLOAD_LABELS[row.workload] ?? String(row.workload)} type="workload" /></td><td className="emp-td">{row.requestedSupport ? "Yes" : "No"}</td><td className="emp-td"><SentimentBadge score={row.sentimentScore} /></td></tr>)}</tbody></table></div>}
+            </>}
+          </div>
+        </section>
         {/* ── KPI summary cards ────────────────────────────────────────────── */}
         <div className="kpi-grid">
           <div className="kpi-card">
