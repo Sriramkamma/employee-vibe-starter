@@ -7,6 +7,7 @@ import { AdminLayout } from "./pages/admin/AdminLayout";
 import { AdminOverviewPage } from "./pages/admin/AdminOverviewPage";
 import { AdminPulseAnalyticsPage } from "./pages/admin/AdminPulseAnalyticsPage";
 import { AdminSignalsPage } from "./pages/admin/AdminSignalsPage";
+import { AdminEmployeesPage } from "./pages/admin/AdminEmployeesPage";
 import "./App.css";
 
 function App() {
@@ -34,7 +35,7 @@ function App() {
           <Route path="signals" element={<AdminSignalsPage />} />
           <Route path="departments" element={<div className="admin-empty-state" style={{margin:'40px'}}><p>Departments - Coming Soon</p></div>} />
           <Route path="teams" element={<div className="admin-empty-state" style={{margin:'40px'}}><p>Teams - Coming Soon</p></div>} />
-          <Route path="employees" element={<div className="admin-empty-state" style={{margin:'40px'}}><p>Employees - Coming Soon</p></div>} />
+          <Route path="employees" element={<AdminEmployeesPage />} />
           <Route path="questions" element={<div className="admin-empty-state" style={{margin:'40px'}}><p>Questions Management - Coming Soon</p></div>} />
           <Route path="reports" element={<div className="admin-empty-state" style={{margin:'40px'}}><p>Reports - Coming Soon</p></div>} />
           <Route path="organization" element={<div className="admin-empty-state" style={{margin:'40px'}}><p>Organization Settings - Coming Soon</p></div>} />
