@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, AlertTriangle, Bell, CalendarDays, RefreshCw } from "lucide-react";
 import { TrendChart } from "../../components/admin/TrendChart";
 import { supabase } from "../../lib/supabase";
@@ -8,15 +8,29 @@ import type { CheckInRecord } from "../../features/checkin/checkInService";
 type Range = "today" | "yesterday" | "7d" | "30d" | "custom";
 type OverviewSignal = { id: string; type: string; status: string; severity: string; date: string; name: string; evidence: string };
 type DailyPoint = { date: string; sentiment: number; mood: number; energy: number; workload: number; responseRate: number };
-const TIME_ZONE = "Asia/Kolkata";
+import {
+  getBusinessDate,
+  shiftBusinessDate,
+  getBusinessDateDaysAgo,
+  formatHumanDate,
+  formatDisplayDate,
+} from "../../utils/dateUtils";
 
 function orgDate(date = new Date()) {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+  return getBusinessDate(date);
 }
-function shiftDay(date: string, amount: number) { const d = new Date(`${date}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + amount); return d.toISOString().slice(0, 10); }
-function daysBeforeToday(days: number) { return shiftDay(orgDate(), -days); }
-function avg(values: number[]) { return values.length ? Math.round(values.reduce((sum, v) => sum + v, 0) / values.length) : 0; }
-function humanDate(iso: string) { return new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }); }
+function shiftDay(date: string, amount: number) {
+  return shiftBusinessDate(date, amount);
+}
+function daysBeforeToday(days: number) {
+  return getBusinessDateDaysAgo(days);
+}
+function avg(values: number[]) {
+  return values.length ? Math.round(values.reduce((sum, v) => sum + v, 0) / values.length) : 0;
+}
+function humanDate(iso: string) {
+  return formatHumanDate(iso);
+}
 
 export function AdminOverviewPage() {
   const { profile } = useAuth();
@@ -95,7 +109,7 @@ export function AdminOverviewPage() {
         <div className="kpi-grid"><div className="kpi-card"><span className="kpi-title">Overall Sentiment</span><span className="kpi-value">{records.length ? `${score}%` : "—"}</span><div className="kpi-change neutral">Average stored sentiment score</div></div><div className="kpi-card"><span className="kpi-title">Completed Responses</span><span className="kpi-value">{records.length}</span><div className="kpi-change neutral">Daily pulse responses received</div></div><div className="kpi-card"><span className="kpi-title">Active Signals</span><span className="kpi-value">{signals.length}</span><div className="kpi-change neutral"><AlertTriangle size={16} /> New or in progress</div></div></div>
         {records.length === 0 ? <div className="admin-panel overview-state"><Activity /><p>No check-in data available for this period.</p></div> : <>
           <div className="overview-grid overview-primary-grid"><section className="admin-section"><div className="admin-section-header"><h2 className="admin-section-title">Workplace Sentiment Trend</h2></div><div className="admin-panel trend-panel"><TrendChart data={trend} metric="sentiment" color="#5969a7" />{trend.length === 1 && <p className="chart-note">Showing the only day with check-in data.</p>}</div></section><section className="admin-section"><div className="admin-section-header"><h2 className="admin-section-title">Latest Pulse</h2></div><div className="admin-panel latest-pulse">{latestPulse ? <><strong>{latestPulse.userName}</strong><span className="pulse-date">{humanDate(latestPulse.date)}</span><div className="pulse-score">{latestPulse.sentimentScore}<small> / 100 sentiment</small></div><dl><dt>Mood</dt><dd>{latestPulse.mood}/5</dd><dt>Energy</dt><dd>{latestPulse.energy}/5</dd><dt>Work pressure</dt><dd>{latestPulse.workload}/5</dd></dl></> : <p>No check-in data available for this period.</p>}</div></section></div>
-          <div className="overview-grid"><section className="admin-section"><div className="admin-section-header"><h2 className="admin-section-title">Check-in Signals</h2></div><div className="admin-panel"><div className="signal-list">{signals.length ? signals.map((s) => <article className="signal-item" key={s.id}><span className={`signal-icon ${s.severity}`}><AlertTriangle size={18} /></span><div className="signal-content"><div className="signal-header"><strong className="signal-title">{s.type.replaceAll("_", " ")}</strong><span className={`signal-status ${s.status}`}>{s.status}</span></div><div className="signal-target">{s.name} · {s.date ? new Date(s.date).toLocaleDateString("en-GB", { timeZone: TIME_ZONE }) : "Date unavailable"}</div><p className="signal-evidence">{s.evidence}</p></div></article>) : <div className="admin-empty-state"><p>No active signals for this period.</p></div>}</div></div></section><section className="admin-section"><div className="admin-section-header"><h2 className="admin-section-title">Employee Pulse</h2></div><div className="admin-panel employee-pulse-list">{latestByEmployee.length ? latestByEmployee.map((r) => <div className="employee-pulse-row" key={r.userId}><div><strong>{r.userName}</strong><span>Latest response · {humanDate(r.date)}</span></div><b>{r.sentimentScore}<small>/100</small></b></div>) : <div className="admin-empty-state"><p>No check-in data available for this period.</p></div>}</div></section></div>
+          <div className="overview-grid"><section className="admin-section"><div className="admin-section-header"><h2 className="admin-section-title">Check-in Signals</h2></div><div className="admin-panel"><div className="signal-list">{signals.length ? signals.map((s) => <article className="signal-item" key={s.id}><span className={`signal-icon ${s.severity}`}><AlertTriangle size={18} /></span><div className="signal-content"><div className="signal-header"><strong className="signal-title">{s.type.replaceAll("_", " ")}</strong><span className={`signal-status ${s.status}`}>{s.status}</span></div><div className="signal-target">{s.name} · {s.date ? formatDisplayDate(s.date) : "Date unavailable"}</div><p className="signal-evidence">{s.evidence}</p></div></article>) : <div className="admin-empty-state"><p>No active signals for this period.</p></div>}</div></div></section><section className="admin-section"><div className="admin-section-header"><h2 className="admin-section-title">Employee Pulse</h2></div><div className="admin-panel employee-pulse-list">{latestByEmployee.length ? latestByEmployee.map((r) => <div className="employee-pulse-row" key={r.userId}><div><strong>{r.userName}</strong><span>Latest response · {humanDate(r.date)}</span></div><b>{r.sentimentScore}<small>/100</small></b></div>) : <div className="admin-empty-state"><p>No check-in data available for this period.</p></div>}</div></section></div>
         </>}
       </>}
     </div>

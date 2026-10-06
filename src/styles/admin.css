@@ -1,4 +1,4 @@
-﻿/* Admin specific styles - Mature, analytical, calm, and information-dense */
+/* Admin specific styles - Mature, analytical, calm, and information-dense */
 
 .admin-shell {
   min-height: 100vh;
@@ -635,4 +635,163 @@
 .admin-empty-state { background:linear-gradient(135deg,#fff,#f8f8ff); }
 @media (prefers-reduced-motion:reduce) { .admin-content { animation:none; } *,*::before,*::after { scroll-behavior:auto !important; transition-duration:.01ms !important; } }
 @media(max-width:700px) { .kpi-card { padding:49px 15px 16px; } .kpi-card::before { top:13px; left:15px; } .overview-filter { padding:15px; } .trend-panel { padding-inline:15px; } }
+
+/* ─── Admin Leadership Message Action & Modal ─── */
+.emp-support-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.emp-msg-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #b7791f;
+  background: #fffbf0;
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.emp-msg-button:hover {
+  background: #fef3c7;
+  border-color: #f59e0b;
+  transform: translateY(-1px);
+}
+
+.vibe-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.vibe-modal-panel {
+  width: min(100%, 540px);
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  box-shadow: 0 20px 45px -10px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.vibe-modal-header {
+  padding: 18px 24px;
+  border-bottom: 1px solid #eef2f6;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.vibe-modal-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vibe-modal-title {
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #b7791f;
+}
+
+.vibe-modal-body {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.vibe-modal-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.vibe-modal-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vibe-modal-meta-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+}
+
+.vibe-modal-meta-val {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.vibe-modal-meta-sub {
+  font-size: 12px;
+  color: #64748b;
+  word-break: break-all;
+}
+
+.vibe-modal-msg-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vibe-modal-msg-card {
+  padding: 16px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-left: 4px solid #f59e0b;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.vibe-modal-msg-text {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1e293b;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+.vibe-modal-msg-empty {
+  font-size: 13.5px;
+  font-style: italic;
+  color: #94a3b8;
+  margin: 0;
+}
+
+.vibe-modal-footer {
+  padding: 14px 24px;
+  border-top: 1px solid #eef2f6;
+  display: flex;
+  justify-content: flex-end;
+  background: #f8fafc;
+}
+
 

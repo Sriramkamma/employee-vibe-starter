@@ -45,6 +45,8 @@ export type EmployeeCheckInRow = {
   requestedSupport: boolean;
   /** Server-calculated score – NOT recalculated on the frontend */
   sentimentScore: number | null;
+  answers?: Record<string, unknown> | null;
+  leadershipMessage?: string | null;
 };
 
 export type EmployeeSummary = {
@@ -67,7 +69,17 @@ export type FetchEmployeeCheckInsResult = {
 };
 
 export type EmployeeOption = { id: string; fullName: string; email: string | null };
-type RawEmployeeCheckIn = { id: string; user_id: string; checkin_date: string; mood: number; energy: number; workload: number; requested_support: boolean; sentiment_score: number | null };
+type RawEmployeeCheckIn = {
+  id: string;
+  user_id: string;
+  checkin_date: string;
+  mood: number;
+  energy: number;
+  workload: number;
+  requested_support: boolean;
+  sentiment_score: number | null;
+  answers?: Record<string, unknown> | null;
+};
 
 export async function fetchEmployeeOptions(): Promise<EmployeeOption[]> {
   const { data, error } = await supabase.from("profiles")
@@ -83,15 +95,28 @@ export async function fetchEmployeeOptions(): Promise<EmployeeOption[]> {
 
 export async function fetchIndividualCheckIns(userId: string, fromDate: string, toDate: string): Promise<EmployeeCheckInRow[]> {
   const { data, error } = await supabase.from("check_ins")
-    .select("id, user_id, checkin_date, mood, energy, workload, requested_support, sentiment_score")
+    .select("id, user_id, checkin_date, mood, energy, workload, requested_support, sentiment_score, answers")
     .eq("user_id", userId).gte("checkin_date", fromDate).lte("checkin_date", toDate)
     .order("checkin_date", { ascending: true }).order("created_at", { ascending: true });
   if (error) throw new Error("Unable to load this employee's check-ins.");
-  return (data ?? []).map((r) => ({
-    checkInId: r.id, userId: r.user_id, fullName: "", email: null, checkInDate: r.checkin_date,
-    mood: r.mood, energy: r.energy, workload: r.workload, requestedSupport: r.requested_support,
-    sentimentScore: r.sentiment_score,
-  }));
+  return (data ?? []).map((r) => {
+    const rawAnswers = (r as { answers?: Record<string, unknown> | null }).answers ?? null;
+    const msg = (rawAnswers?.leadership_message as string | undefined) ?? null;
+    return {
+      checkInId: r.id,
+      userId: r.user_id,
+      fullName: "",
+      email: null,
+      checkInDate: r.checkin_date,
+      mood: r.mood,
+      energy: r.energy,
+      workload: r.workload,
+      requestedSupport: r.requested_support,
+      sentimentScore: r.sentiment_score,
+      answers: rawAnswers,
+      leadershipMessage: msg,
+    };
+  });
 }
 
 // ─── Fetch paginated employee check-ins ──────────────────────────────────────
@@ -161,7 +186,8 @@ export async function fetchEmployeeCheckIns(
         energy,
         workload,
         requested_support,
-        sentiment_score
+        sentiment_score,
+        answers
       `,
       { count: "exact" },
     )
@@ -195,6 +221,9 @@ export async function fetchEmployeeCheckIns(
 
   const rows: EmployeeCheckInRow[] = (checkIns ?? []).map((row) => {
     const profile = profileMap.get(row.user_id);
+    const rawAnswers = (row as { answers?: Record<string, unknown> | null }).answers ?? null;
+    const msg = (rawAnswers?.leadership_message as string | undefined) ?? null;
+
     return {
       checkInId: row.id,
       userId: row.user_id,
@@ -206,6 +235,8 @@ export async function fetchEmployeeCheckIns(
       workload: row.workload,
       requestedSupport: row.requested_support,
       sentimentScore: row.sentiment_score,
+      answers: rawAnswers,
+      leadershipMessage: msg,
     };
   });
 

@@ -13,21 +13,82 @@ export type CheckInRecord = {
   workload: number;
   requestedSupport: boolean;
   sentimentScore: number;
+  answers?: Record<string, unknown> | null;
+  leadershipMessage?: string | null;
 };
 
-type CheckInInput = Omit<
+export type CheckInInput = Omit<
   CheckInRecord,
   "id" | "date" | "submittedAt" | "sentimentScore"
->;
+> & {
+  answers?: Record<string, unknown> | null;
+  leadershipMessage?: string | null;
+};
 
-function getLocalDateString(): string {
-  const now = new Date();
+import { getBusinessDate, shiftBusinessDate } from "../../utils/dateUtils";
 
-  return [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, "0"),
-    String(now.getDate()).padStart(2, "0"),
-  ].join("-");
+/**
+ * Fetch an employee's check-in for a specific business date from Supabase.
+ * Defaults to today's Asia/Kolkata business date.
+ */
+export async function getCheckInForDate(
+  userId: string,
+  date: string = getBusinessDate(),
+): Promise<CheckInRecord | null> {
+  const { data, error } = await supabase
+    .from("check_ins")
+    .select(`
+      id,
+      user_id,
+      checkin_date,
+      created_at,
+      mood,
+      energy,
+      workload,
+      requested_support,
+      sentiment_score,
+      answers
+    `)
+    .eq("user_id", userId)
+    .eq("checkin_date", date)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Failed to fetch check-in for date:", error);
+    throw new Error("Unable to verify daily check-in status.");
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  const rawAnswers = (data as { answers?: Record<string, unknown> | null }).answers ?? null;
+  const leadershipMsg = (rawAnswers?.leadership_message as string | undefined) ?? null;
+
+  return {
+    id: data.id,
+    date: data.checkin_date,
+    submittedAt: data.created_at,
+    userId: data.user_id,
+    userName: "",
+    mood: data.mood,
+    energy: data.energy,
+    workload: data.workload,
+    requestedSupport: data.requested_support,
+    sentimentScore: data.sentiment_score,
+    answers: rawAnswers,
+    leadershipMessage: leadershipMsg,
+  };
+}
+
+/**
+ * Check whether the current user has already completed a check-in for today's
+ * Asia/Kolkata calendar date. Source of truth is the Supabase check_ins table.
+ */
+export async function getTodayCheckIn(
+  userId: string,
+): Promise<CheckInRecord | null> {
+  return getCheckInForDate(userId, getBusinessDate());
 }
 
 /**
@@ -49,7 +110,8 @@ export async function getCheckIns(): Promise<CheckInRecord[]> {
       energy,
       workload,
       requested_support,
-      sentiment_score
+      sentiment_score,
+      answers
     `)
     .order("checkin_date", { ascending: true });
 
@@ -100,6 +162,9 @@ export async function getCheckIns(): Promise<CheckInRecord[]> {
         .join(" ") ||
       "Employee";
 
+    const rawAnswers = (record as { answers?: Record<string, unknown> | null }).answers ?? null;
+    const leadershipMsg = (rawAnswers?.leadership_message as string | undefined) ?? null;
+
     return {
       id: record.id,
       date: record.checkin_date,
@@ -111,6 +176,8 @@ export async function getCheckIns(): Promise<CheckInRecord[]> {
       workload: record.workload,
       requestedSupport: record.requested_support,
       sentimentScore: record.sentiment_score,
+      answers: rawAnswers,
+      leadershipMessage: leadershipMsg,
     };
   });
 }
@@ -135,7 +202,18 @@ export async function saveCheckIn(
     throw new Error("You must be signed in to submit a check-in.");
   }
 
-  const today = getLocalDateString();
+  const today = getBusinessDate();
+
+  const answersPayload =
+    input.answers ??
+    (input.requestedSupport
+      ? {
+          leadership_request: "Yes, please",
+          leadership_message: input.leadershipMessage || null,
+        }
+      : {
+          leadership_request: "Not right now",
+        });
 
   const { data, error } = await supabase
     .from("check_ins")
@@ -147,6 +225,7 @@ export async function saveCheckIn(
         energy: input.energy,
         workload: input.workload,
         requested_support: input.requestedSupport,
+        answers: answersPayload,
       },
       {
         onConflict: "user_id,checkin_date",
@@ -161,7 +240,8 @@ export async function saveCheckIn(
       energy,
       workload,
       requested_support,
-      sentiment_score
+      sentiment_score,
+      answers
     `)
     .single();
 
@@ -171,6 +251,12 @@ export async function saveCheckIn(
       error.message || "Unable to save your check-in.",
     );
   }
+
+  const rawAnswers = (data as { answers?: Record<string, unknown> | null }).answers ?? null;
+  const leadershipMsg =
+    (rawAnswers?.leadership_message as string | undefined) ??
+    input.leadershipMessage ??
+    null;
 
   return {
     id: data.id,
@@ -183,6 +269,8 @@ export async function saveCheckIn(
     workload: data.workload,
     requestedSupport: data.requested_support,
     sentimentScore: data.sentiment_score,
+    answers: rawAnswers,
+    leadershipMessage: leadershipMsg,
   };
 }
 
@@ -209,18 +297,10 @@ export function buildTrendData(
   days = 30,
 ): TrendDataPoint[] {
   const data: TrendDataPoint[] = [];
-  const today = new Date();
+  const today = getBusinessDate();
 
   for (let offset = days - 1; offset >= 0; offset--) {
-    const date = new Date(today);
-
-    date.setDate(today.getDate() - offset);
-
-    const key = [
-      date.getFullYear(),
-      String(date.getMonth() + 1).padStart(2, "0"),
-      String(date.getDate()).padStart(2, "0"),
-    ].join("-");
+    const key = shiftBusinessDate(today, -offset);
 
     const dayRecords = records.filter(
       (record) => record.date === key,

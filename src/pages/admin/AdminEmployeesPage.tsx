@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Users,
   Calendar,
@@ -12,6 +12,7 @@ import {
   SearchX,
   Loader2,
   Search,
+  MessageSquare,
 } from "lucide-react";
 import {
   fetchEmployeeCheckIns,
@@ -26,6 +27,12 @@ import {
   type EmployeeOption,
 } from "../../features/admin/adminEmployeesService";
 
+import {
+  getBusinessDate,
+  getBusinessDateDaysAgo,
+  formatDisplayDate,
+} from "../../utils/dateUtils";
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const PAGE_SIZE = 25;
@@ -33,28 +40,15 @@ const PAGE_SIZE = 25;
 type QuickRange = "today" | "7d" | "30d" | "custom" | "";
 
 function todayISO(): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  return getBusinessDate();
 }
 
 function offsetISO(days: number): string {
-  const d = new Date(`${todayISO()}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - days);
-  return d.toISOString().slice(0, 10);
+  return getBusinessDateDaysAgo(days);
 }
 
 function formatDate(iso: string): string {
-  const [year, month, day] = iso.split("-");
-  const d = new Date(
-    Number(year),
-    Number(month) - 1,
-    Number(day),
-  );
-  return d.toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC",
-  });
+  return formatDisplayDate(iso);
 }
 
 // ─── Sentiment badge ──────────────────────────────────────────────────────────
@@ -102,6 +96,7 @@ export function AdminEmployeesPage() {
   const [individualRows, setIndividualRows] = useState<EmployeeCheckInRow[]>([]);
   const [individualLoading, setIndividualLoading] = useState(false);
   const [individualError, setIndividualError] = useState<string | null>(null);
+  const [selectedMessageRow, setSelectedMessageRow] = useState<EmployeeCheckInRow | null>(null);
 
   useEffect(() => {
     void fetchEmployeeOptions().then(setEmployeeOptions).catch((err) => setIndividualError(err.message));
@@ -290,7 +285,7 @@ export function AdminEmployeesPage() {
               <div className="admin-section-header" style={{ marginTop: 24 }}><h3 className="admin-section-title">Sentiment Trend</h3><span className="emp-record-count">Latest: {individualScores.length ? `${individualScores[individualScores.length - 1]}%` : "—"}</span></div>
               {individualLoading ? <p>Loading employee analysis…</p> : individualError ? <p role="alert">{individualError}</p> : individualTrend.length ? <div style={{ height: 240, margin: "24px 12px 32px" }}><svg viewBox={`0 0 ${Math.max(800, individualTrend.length * 40)} 240`} preserveAspectRatio="none" style={{ width: "100%", height: "100%" }} aria-label="Employee sentiment trend"><polyline fill="none" stroke="var(--primary)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" points={individualTrend.map((point, index) => `${index * (Math.max(800, individualTrend.length * 40) / Math.max(1, individualTrend.length - 1))},${240 - point.score * 2.2}`).join(" ")} /></svg></div> : <p>No check-ins found for this period.</p>}
               <div className="admin-section-header"><h3 className="admin-section-title">Individual Check-in History</h3></div>
-              {individualRows.length > 0 && <div className="emp-table-scroll"><table className="emp-table" aria-label="Individual employee check-in history"><thead><tr><th className="emp-th">Date</th><th className="emp-th">Mood</th><th className="emp-th">Energy</th><th className="emp-th">Work Pressure</th><th className="emp-th">Leadership Request</th><th className="emp-th">Sentiment</th></tr></thead><tbody>{[...individualRows].reverse().map((row) => <tr key={row.checkInId} className={`emp-tr ${row.sentimentScore !== null && row.sentimentScore < 40 ? "emp-tr--low" : ""}`}><td className="emp-td">{formatDate(row.checkInDate)}</td><td className="emp-td"><AnswerBadge label={MOOD_LABELS[row.mood] ?? String(row.mood)} type="mood" /></td><td className="emp-td"><AnswerBadge label={ENERGY_LABELS[row.energy] ?? String(row.energy)} type="energy" /></td><td className="emp-td"><AnswerBadge label={WORKLOAD_LABELS[row.workload] ?? String(row.workload)} type="workload" /></td><td className="emp-td">{row.requestedSupport ? "Yes" : "No"}</td><td className="emp-td"><SentimentBadge score={row.sentimentScore} /></td></tr>)}</tbody></table></div>}
+              {individualRows.length > 0 && <div className="emp-table-scroll"><table className="emp-table" aria-label="Individual employee check-in history"><thead><tr><th className="emp-th">Date</th><th className="emp-th">Mood</th><th className="emp-th">Energy</th><th className="emp-th">Work Pressure</th><th className="emp-th">Leadership Request</th><th className="emp-th">Sentiment</th></tr></thead><tbody>{[...individualRows].reverse().map((row) => { const emp = employeeOptions.find((e) => e.id === selectedEmployeeId); return <tr key={row.checkInId} className={`emp-tr ${row.sentimentScore !== null && row.sentimentScore < 40 ? "emp-tr--low" : ""}`}><td className="emp-td">{formatDate(row.checkInDate)}</td><td className="emp-td"><AnswerBadge label={MOOD_LABELS[row.mood] ?? String(row.mood)} type="mood" /></td><td className="emp-td"><AnswerBadge label={ENERGY_LABELS[row.energy] ?? String(row.energy)} type="energy" /></td><td className="emp-td"><AnswerBadge label={WORKLOAD_LABELS[row.workload] ?? String(row.workload)} type="workload" /></td><td className="emp-td"><div className="emp-support-cell"><AnswerBadge label={row.requestedSupport ? "Yes, please" : "Not right now"} type="support" />{row.requestedSupport && <button type="button" className="emp-msg-button" onClick={() => setSelectedMessageRow({ ...row, fullName: emp?.fullName || "Employee", email: emp?.email || null })} title="View leadership message" aria-label="View leadership message"><MessageSquare size={12} aria-hidden="true" /><span>View message</span></button>}</div></td><td className="emp-td"><SentimentBadge score={row.sentimentScore} /></td></tr>; })}</tbody></table></div>}
             </>}
           </div>
         </section>
@@ -588,10 +583,24 @@ export function AdminEmployeesPage() {
 
                         {/* Leadership Request */}
                         <td className="emp-td">
-                          <AnswerBadge
-                            label={row.requestedSupport ? "Yes, please" : "Not right now"}
-                            type="support"
-                          />
+                          <div className="emp-support-cell">
+                            <AnswerBadge
+                              label={row.requestedSupport ? "Yes, please" : "Not right now"}
+                              type="support"
+                            />
+                            {row.requestedSupport && (
+                              <button
+                                type="button"
+                                className="emp-msg-button"
+                                onClick={() => setSelectedMessageRow(row)}
+                                title="View leadership message"
+                                aria-label={`View leadership message from ${row.fullName}`}
+                              >
+                                <MessageSquare size={12} aria-hidden="true" />
+                                <span>View message</span>
+                              </button>
+                            )}
+                          </div>
                         </td>
 
                         {/* Sentiment */}
@@ -639,6 +648,101 @@ export function AdminEmployeesPage() {
           </div>
         </section>
       </div>
+
+      {/* ── Detail Modal for Leadership Support Message ── */}
+      {selectedMessageRow && (
+        <div
+          className="vibe-modal-overlay"
+          onClick={() => setSelectedMessageRow(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="leadership-modal-title"
+        >
+          <div
+            className="vibe-modal-panel reveal-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="vibe-modal-header">
+              <div className="vibe-modal-badge">
+                <MessageSquare size={18} style={{ color: "#b7791f" }} aria-hidden="true" />
+                <span id="leadership-modal-title" className="vibe-modal-title">
+                  Leadership Support Request
+                </span>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setSelectedMessageRow(null)}
+                aria-label="Close message details"
+                style={{ width: "36px", height: "36px", minWidth: "36px", borderRadius: "10px" }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="vibe-modal-body">
+              {/* Metadata Grid */}
+              <div className="vibe-modal-meta-grid">
+                <div className="vibe-modal-meta-item">
+                  <span className="vibe-modal-meta-label">Employee</span>
+                  <strong className="vibe-modal-meta-val">{selectedMessageRow.fullName}</strong>
+                  {selectedMessageRow.email && (
+                    <span className="vibe-modal-meta-sub">{selectedMessageRow.email}</span>
+                  )}
+                </div>
+
+                <div className="vibe-modal-meta-item">
+                  <span className="vibe-modal-meta-label">Check-in Date</span>
+                  <strong className="vibe-modal-meta-val">{formatDate(selectedMessageRow.checkInDate)}</strong>
+                </div>
+
+                <div className="vibe-modal-meta-item">
+                  <span className="vibe-modal-meta-label">Sentiment</span>
+                  <div style={{ marginTop: "4px" }}>
+                    <SentimentBadge score={selectedMessageRow.sentimentScore} />
+                  </div>
+                </div>
+
+                <div className="vibe-modal-meta-item">
+                  <span className="vibe-modal-meta-label">Work Pressure</span>
+                  <div style={{ marginTop: "4px" }}>
+                    <AnswerBadge
+                      label={WORKLOAD_LABELS[selectedMessageRow.workload] ?? String(selectedMessageRow.workload)}
+                      type="workload"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Message Container */}
+              <div className="vibe-modal-msg-container">
+                <span className="vibe-modal-meta-label">Employee Message</span>
+                <div className="vibe-modal-msg-card">
+                  {selectedMessageRow.leadershipMessage?.trim() ? (
+                    <p className="vibe-modal-msg-text">
+                      "{selectedMessageRow.leadershipMessage.trim()}"
+                    </p>
+                  ) : (
+                    <p className="vibe-modal-msg-empty">
+                      No additional message provided.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="vibe-modal-footer">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setSelectedMessageRow(null)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

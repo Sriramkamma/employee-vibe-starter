@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { TrendDataPoint } from "../../features/admin/adminTypes";
+import { formatChartDate } from "../../utils/dateUtils";
 
 type TrendChartProps = {
   data: TrendDataPoint[];
@@ -97,9 +98,4 @@ export function TrendChart({ data, metric, height = 240, color = "var(--primary)
       </div>
     </div>
   );
-}
-
-function formatChartDate(iso: string) {
-  if (!iso) return "";
-  return new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }

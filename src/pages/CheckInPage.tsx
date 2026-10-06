@@ -4,13 +4,14 @@ import {
   Check,
   ChevronLeft,
   Clock3,
+  Loader2,
   LockKeyhole,
   Sparkles,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { PulseSlider } from "../components/PulseSlider";
 import { useAuth } from "../features/auth/AuthContext";
-import { saveCheckIn } from "../features/checkin/checkInService";
+import { getTodayCheckIn, saveCheckIn } from "../features/checkin/checkInService";
 import {
   useEmotionalTheme,
   type EmotionalThemeType,
@@ -53,12 +54,13 @@ const THEME_TYPES: EmotionalThemeType[] = [
 
 export function CheckInPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
 
   const [screen, setScreen] = useState<"checkin" | "done">("checkin");
+  const [checkingExisting, setCheckingExisting] = useState(true);
   const [step, setStep] = useState(0);
   const [direction, setDirection] = useState<"forward" | "back">("forward");
-  const [timeLeft, setTimeLeft] = useState(10);
+  const [timeLeft, setTimeLeft] = useState(30);
 
   const [answers, setAnswers] = useState<
     Record<number, string | number>
@@ -70,6 +72,41 @@ export function CheckInPage() {
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [leadershipMessage, setLeadershipMessage] = useState("");
+
+  // ── Direct Route Protection ───────────────────────────────────────────────
+  // Before rendering the check-in form, verify against Supabase whether
+  // today's check-in (in Asia/Kolkata business date) already exists.
+  useEffect(() => {
+    let active = true;
+
+    async function checkExistingCheckIn() {
+      if (!user) {
+        if (active) setCheckingExisting(false);
+        return;
+      }
+
+      try {
+        const existing = await getTodayCheckIn(user.id);
+        if (!active) return;
+        if (existing) {
+          setScreen("done");
+        }
+      } catch (err) {
+        console.error("Failed to check existing check-in:", err);
+      } finally {
+        if (active) {
+          setCheckingExisting(false);
+        }
+      }
+    }
+
+    void checkExistingCheckIn();
+
+    return () => {
+      active = false;
+    };
+  }, [user]);
 
   const questions = [
     {
@@ -121,6 +158,11 @@ export function CheckInPage() {
       [step]: val,
     }));
 
+    // If on final step and selecting "Not right now", clear the leadership message
+    if (isFinal && !String(val).includes("Yes, please")) {
+      setLeadershipMessage("");
+    }
+
     // Clear any previous save error when the employee changes an answer.
     if (saveError) {
       setSaveError(null);
@@ -128,9 +170,12 @@ export function CheckInPage() {
   };
 
   const next = async () => {
-    // Final question must have an answer.
-    // Also prevent duplicate submissions while Supabase is saving.
-    if (isFinal && (!currentVal || saving)) {
+    // Prevent double-submissions or submitting without an answer
+    if (saving) {
+      return;
+    }
+
+    if (isFinal && !currentVal) {
       return;
     }
 
@@ -153,7 +198,7 @@ export function CheckInPage() {
     // Questions 1 → 3
     if (step < 3) {
       setStep(step + 1);
-      setTimeLeft(10);
+      setTimeLeft(30);
       return;
     }
 
@@ -167,6 +212,9 @@ export function CheckInPage() {
       setSaving(true);
       setSaveError(null);
 
+      const isLeadershipRequested = String(answers[3]).includes("Yes, please");
+      const trimmedMessage = leadershipMessage.trim();
+
       try {
         await saveCheckIn({
           userId: user.id,
@@ -174,8 +222,12 @@ export function CheckInPage() {
           mood: Math.round(answers[0]),
           energy: Math.round(answers[1]),
           workload: Math.round(answers[2]),
-          requestedSupport:
-            String(answers[3]).includes("Yes, please"),
+          requestedSupport: isLeadershipRequested,
+          answers: {
+            leadership_request: isLeadershipRequested ? "Yes, please" : "Not right now",
+            ...(isLeadershipRequested ? { leadership_message: trimmedMessage || null } : {}),
+          },
+          leadershipMessage: isLeadershipRequested ? trimmedMessage || null : null,
         });
 
         // Only show the completed screen after Supabase confirms
@@ -215,28 +267,15 @@ export function CheckInPage() {
 
     setDirection("back");
     setStep(step - 1);
-    setTimeLeft(10);
+    setTimeLeft(30);
   };
 
   const resetToHome = () => {
-    setScreen("checkin");
-    setStep(0);
-    setTimeLeft(10);
-
-    setAnswers({
-      0: 3,
-      1: 3,
-      2: 3,
-    });
-
-    setSaving(false);
-    setSaveError(null);
-
     navigate("/employee");
   };
 
   useEffect(() => {
-    if (screen === "done") return;
+    if (screen === "done" || checkingExisting || saving || isFinal) return;
 
     if (timeLeft <= 0) {
       void next();
@@ -253,10 +292,39 @@ export function CheckInPage() {
     // next is intentionally excluded because this timer should
     // only react to the countdown and screen state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeLeft, screen]);
+  }, [timeLeft, screen, checkingExisting, saving, isFinal]);
+
+  // ── Checking status loading screen ────────────────────────────────────────
+  if (checkingExisting) {
+    return (
+      <main className="app-shell checkin-shell" style={atmosphereStyle}>
+        <div className="vibe-bg-bloom vibe-bloom-a" />
+        <div className="noise" />
+        <section
+          className="welcome-card reveal-up"
+          style={{ minHeight: "220px", display: "grid", placeItems: "center" }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "12px",
+              color: "var(--text-muted)",
+              fontSize: "14px",
+            }}
+          >
+            <Loader2 size={20} className="pulse-spin" aria-hidden="true" />
+            <span>Checking today's pulse...</span>
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   // ── Done screen ───────────────────────────────────────────────────────────
   if (screen === "done") {
+    const displayName = profile?.firstName || user?.name?.split(" ")[0] || "there";
+
     return (
       <main className="app-shell">
         <div className="ambient ambient-one" />
@@ -278,22 +346,24 @@ export function CheckInPage() {
             Check-in complete
           </div>
 
-          <h1>Thanks for checking in.</h1>
+          <h1>Thank you, {displayName}!</h1>
 
           <p className="lead">
-            Forty-five seconds well spent. We'll see you tomorrow.
+            Your daily pulse has been recorded successfully.
           </p>
 
           <div className="mini-summary">
             <div>
               <strong className="ok">✓</strong>
-              <span>Response saved on this device</span>
+              <span>Today's check-in is complete.</span>
             </div>
 
             <div>
-              <strong className="streak">4</strong>
+              <strong className="streak">
+                <Clock3 size={15} />
+              </strong>
               <span>
-                Day streak. You're building a rhythm.
+                You can come back tomorrow for your next check-in.
               </span>
             </div>
           </div>
@@ -420,7 +490,7 @@ export function CheckInPage() {
                 : current.eyebrow}
             </div>
 
-            <span
+            {!isFinal && <span
               className="time-pill"
               style={{
                 color: "var(--vibe-secondary)",
@@ -434,7 +504,7 @@ export function CheckInPage() {
                 aria-hidden="true"
               />{" "}
               {timeLeft} sec
-            </span>
+            </span>}
           </div>
 
           <h2>
@@ -503,6 +573,28 @@ export function CheckInPage() {
                   </button>
                 );
               })}
+            </div>
+          )}
+
+          {/* ── Optional Leadership Message Input ── */}
+          {isFinal && String(currentVal).includes("Yes, please") && (
+            <div className="leadership-message-box">
+              <label htmlFor="leadership-message" className="leadership-message-label">
+                What would you like the leadership team to know?
+              </label>
+              <p className="leadership-message-subtext">
+                You can briefly tell us what support you need or what is affecting you.
+              </p>
+              <textarea
+                id="leadership-message"
+                className="leadership-message-input"
+                rows={3}
+                value={leadershipMessage}
+                onChange={(e) => setLeadershipMessage(e.target.value)}
+                placeholder="Tell us briefly what is affecting you or what support you need..."
+                disabled={saving}
+                maxLength={1000}
+              />
             </div>
           )}
 
