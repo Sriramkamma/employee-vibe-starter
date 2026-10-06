@@ -67,6 +67,7 @@ export type FetchEmployeeCheckInsResult = {
 };
 
 export type EmployeeOption = { id: string; fullName: string; email: string | null };
+type RawEmployeeCheckIn = { id: string; user_id: string; checkin_date: string; mood: number; energy: number; workload: number; requested_support: boolean; sentiment_score: number | null };
 
 export async function fetchEmployeeOptions(): Promise<EmployeeOption[]> {
   const { data, error } = await supabase.from("profiles")
@@ -114,8 +115,6 @@ export async function fetchEmployeeCheckIns(
     pageSize = 25,
   } = options;
 
-  const from = page * pageSize;
-  const to = from + pageSize - 1;
 
   // 1. First, get all employee profile IDs (role = 'employee').
   //    We pull email here as well since auth.users is not directly
@@ -168,8 +167,7 @@ export async function fetchEmployeeCheckIns(
     )
     .in("user_id", employeeIds)
     .order("checkin_date", { ascending: false })
-    .order("created_at", { ascending: false })
-    .range(from, to);
+    .order("created_at", { ascending: false });
 
   if (fromDate) {
     query = query.gte("checkin_date", fromDate);
@@ -178,11 +176,21 @@ export async function fetchEmployeeCheckIns(
     query = query.lte("checkin_date", toDate);
   }
 
-  const { data: checkIns, error: checkInsError, count } = await query;
-
-  if (checkInsError) {
-    console.error("Failed to fetch check-ins:", checkInsError);
-    throw new Error("Unable to load check-in records.");
+  const checkIns: RawEmployeeCheckIn[] = [];
+  let totalCount = 0;
+  let offset = 0;
+  const batchSize = 1000;
+  while (true) {
+    const { data, error, count } = await query.range(offset, offset + batchSize - 1);
+    if (error) {
+      console.error("Failed to fetch check-ins:", error);
+      throw new Error("Unable to load check-in records.");
+    }
+    if (offset === 0) totalCount = count ?? 0;
+    const batch = data ?? [];
+    checkIns.push(...batch);
+    if (batch.length < batchSize) break;
+    offset += batchSize;
   }
 
   const rows: EmployeeCheckInRow[] = (checkIns ?? []).map((row) => {
@@ -201,7 +209,14 @@ export async function fetchEmployeeCheckIns(
     };
   });
 
-  return { rows, totalCount: count ?? 0 };
+  rows.sort((a, b) => {
+    const aLow = a.sentimentScore !== null && a.sentimentScore < 40;
+    const bLow = b.sentimentScore !== null && b.sentimentScore < 40;
+    if (aLow !== bLow) return aLow ? -1 : 1;
+    return b.checkInDate.localeCompare(a.checkInDate);
+  });
+  const start = page * pageSize;
+  return { rows: rows.slice(start, start + pageSize), totalCount: totalCount || rows.length };
 }
 
 // ─── Fetch summary statistics ─────────────────────────────────────────────────

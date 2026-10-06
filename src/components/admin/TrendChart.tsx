@@ -37,47 +37,69 @@ export function TrendChart({ data, metric, height = 240, color = "var(--primary)
     );
   }
 
+  const chartPoints = data.map((point, index) => ({
+    x: index * (800 / (data.length - 1 || 1)),
+    y: height - Number(point[metric]) * (height / 100),
+    date: point.date,
+    value: Number(point[metric]),
+  }));
+
   return (
-    <div style={{ width: "100%", height, position: "relative" }}>
+    <div className="trend-chart" style={{ width: "100%", height, position: "relative" }}>
       <svg 
+        className="trend-chart-svg"
         viewBox={`0 0 800 ${height}`} 
         preserveAspectRatio="none"
         style={{ width: "100%", height: "100%", overflow: "visible" }}
       >
         <defs>
-          <linearGradient id={`grad-${metric}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity={0.3} />
-            <stop offset="100%" stopColor={color} stopOpacity={0} />
+          <linearGradient id={`grad-${metric}`} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor={color} stopOpacity={0.9} />
+            <stop offset="100%" stopColor="#7C3AED" stopOpacity={0.95} />
           </linearGradient>
+          <linearGradient id={`area-${metric}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#8B7CF6" stopOpacity={0.22} />
+            <stop offset="100%" stopColor="#A78BFA" stopOpacity={0.015} />
+          </linearGradient>
+          <filter id={`glow-${metric}`} x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
         </defs>
         
         {/* Background Fill */}
         <path 
           d={`M 0,${height} L ${points} L 800,${height} Z`} 
-          fill={`url(#grad-${metric})`} 
+          fill={`url(#area-${metric})`} 
         />
         
         {/* Line */}
         <path 
           d={`M ${points}`} 
           fill="none" 
-          stroke={color} 
-          strokeWidth="3" 
+          stroke={`url(#grad-${metric})`} 
+          strokeWidth="3.5" 
           strokeLinecap="round"
           strokeLinejoin="round"
           style={{
-            filter: `drop-shadow(0px 4px 6px ${color}40)`
+            filter: `url(#glow-${metric})`
           }}
         />
+        {chartPoints.map((point) => <circle className="trend-point" key={point.date} cx={point.x} cy={point.y} r="4.5" fill="#fff" stroke="#6555db" strokeWidth="2.5"><title>{`${point.date}: ${point.value} / 100`}</title></circle>)}
       </svg>
       
       {/* Quick axes labels (optional, simplified) */}
-      <div style={{ position: "absolute", bottom: "-24px", left: 0, fontSize: 12, color: "var(--text-muted)" }}>
-        {data[0]?.date}
+      <div className="trend-axis-label" style={{ position: "absolute", bottom: "-24px", left: 0, fontSize: 12, color: "var(--text-muted)" }}>
+        {formatChartDate(data[0]?.date ?? "")}
       </div>
-      <div style={{ position: "absolute", bottom: "-24px", right: 0, fontSize: 12, color: "var(--text-muted)" }}>
-        {data[data.length - 1]?.date}
+      <div className="trend-axis-label" style={{ position: "absolute", bottom: "-24px", right: 0, fontSize: 12, color: "var(--text-muted)" }}>
+        {formatChartDate(data[data.length - 1]?.date ?? "")}
       </div>
     </div>
   );
+}
+
+function formatChartDate(iso: string) {
+  if (!iso) return "";
+  return new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }

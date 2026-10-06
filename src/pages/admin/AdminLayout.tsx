@@ -1,6 +1,6 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../../features/auth/AuthContext";
-import { LayoutDashboard, Activity, AlertTriangle, Building2, Users, User, HelpCircle, FileBarChart, Settings, ShieldAlert, LogOut } from "lucide-react";
+import { LayoutDashboard, Activity, AlertTriangle, Building2, User, HelpCircle, FileBarChart, LogOut } from "lucide-react";
 import "../../styles/admin.css";
 
 export function AdminLayout() {
@@ -38,9 +38,6 @@ export function AdminLayout() {
           <NavLink to="/admin/departments" className={({ isActive }) => `admin-nav-item ${isActive ? 'active' : ''}`}>
             <Building2 size={18} /> Departments
           </NavLink>
-          <NavLink to="/admin/teams" className={({ isActive }) => `admin-nav-item ${isActive ? 'active' : ''}`}>
-            <Users size={18} /> Teams
-          </NavLink>
           <NavLink to="/admin/employees" className={({ isActive }) => `admin-nav-item ${isActive ? 'active' : ''}`}>
             <User size={18} /> Employees
           </NavLink>
@@ -56,12 +53,6 @@ export function AdminLayout() {
           
           <div className="admin-nav-divider" />
           
-          <NavLink to="/admin/organization" className={({ isActive }) => `admin-nav-item ${isActive ? 'active' : ''}`}>
-            <Settings size={18} /> Organization
-          </NavLink>
-          <NavLink to="/admin/audit-logs" className={({ isActive }) => `admin-nav-item ${isActive ? 'active' : ''}`}>
-            <ShieldAlert size={18} /> Audit Logs
-          </NavLink>
 
           <div style={{ flex: 1 }} />
           

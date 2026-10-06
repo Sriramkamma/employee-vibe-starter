@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+﻿import { useState, useEffect, useCallback } from "react";
 import {
   Users,
   Calendar,
@@ -33,22 +33,13 @@ const PAGE_SIZE = 25;
 type QuickRange = "today" | "7d" | "30d" | "custom" | "";
 
 function todayISO(): string {
-  const d = new Date();
-  return [
-    d.getFullYear(),
-    String(d.getMonth() + 1).padStart(2, "0"),
-    String(d.getDate()).padStart(2, "0"),
-  ].join("-");
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 }
 
 function offsetISO(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return [
-    d.getFullYear(),
-    String(d.getMonth() + 1).padStart(2, "0"),
-    String(d.getDate()).padStart(2, "0"),
-  ].join("-");
+  const d = new Date(`${todayISO()}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
 }
 
 function formatDate(iso: string): string {
@@ -62,6 +53,7 @@ function formatDate(iso: string): string {
     day: "2-digit",
     month: "short",
     year: "numeric",
+    timeZone: "UTC",
   });
 }
 
@@ -132,7 +124,7 @@ export function AdminEmployeesPage() {
   );
   const scoredIndividualRows = individualRows.filter((row) => row.sentimentScore !== null && Number.isFinite(row.sentimentScore));
   const individualAverage = scoredIndividualRows.length
-    ? Math.round(scoredIndividualRows.reduce((sum, row) => sum + (row.sentimentScore ?? 0), 0) / scoredIndividualRows.length)
+    ? Math.round((scoredIndividualRows.reduce((sum, row) => sum + (row.sentimentScore ?? 0), 0) / scoredIndividualRows.length) * 10) / 10
     : null;
   const individualScores = scoredIndividualRows.map((row) => row.sentimentScore as number);
   const individualTrend = individualRows.reduce<{ date: string; score: number; count: number }[]>((days, row) => {
@@ -289,15 +281,16 @@ export function AdminEmployeesPage() {
             </div>}
             {selectedEmployeeId && <>
               <div className="kpi-grid" style={{ marginTop: 20 }}>
-                <div className="kpi-card"><span className="kpi-title">Average Sentiment</span><span className="kpi-value">{individualAverage === null ? "—" : `${individualAverage}%`}</span><div className="kpi-change neutral">Across actual scored check-ins</div></div>
-                <div className="kpi-card"><span className="kpi-title">Check-ins</span><span className="kpi-value">{individualRows.length}</span><div className="kpi-change neutral">In selected period</div></div>
-                <div className="kpi-card"><span className="kpi-title">Lowest Sentiment</span><span className="kpi-value">{individualScores.length ? `${Math.min(...individualScores)}%` : "—"}</span></div>
-                <div className="kpi-card"><span className="kpi-title">Highest Sentiment</span><span className="kpi-value">{individualScores.length ? `${Math.max(...individualScores)}%` : "—"}</span></div>
+                <div className="kpi-card"><span className="kpi-title">Average Sentiment</span><span className="kpi-value">{individualLoading ? "…" : individualAverage === null ? "—" : `${individualAverage}%`}</span><div className="kpi-change neutral">Across actual scored check-ins</div></div>
+                <div className="kpi-card"><span className="kpi-title">Check-ins</span><span className="kpi-value">{individualLoading ? "…" : individualRows.length}</span><div className="kpi-change neutral">In selected period</div></div>
+                <div className="kpi-card"><span className="kpi-title">Lowest Sentiment</span><span className="kpi-value">{individualLoading ? "…" : individualScores.length ? `${Math.min(...individualScores)}%` : "—"}</span></div>
+                <div className="kpi-card"><span className="kpi-title">Highest Sentiment</span><span className="kpi-value">{individualLoading ? "…" : individualScores.length ? `${Math.max(...individualScores)}%` : "—"}</span></div>
+                <div className="kpi-card"><span className="kpi-title">Latest Sentiment</span><span className="kpi-value">{individualLoading ? "…" : individualScores.length ? `${[...individualRows].reverse().find((row) => row.sentimentScore !== null)?.sentimentScore}%` : "—"}</span></div>
               </div>
               <div className="admin-section-header" style={{ marginTop: 24 }}><h3 className="admin-section-title">Sentiment Trend</h3><span className="emp-record-count">Latest: {individualScores.length ? `${individualScores[individualScores.length - 1]}%` : "—"}</span></div>
-              {individualLoading ? <p>Loading employee analysis…</p> : individualError ? <p role="alert">{individualError}</p> : individualTrend.length ? <div style={{ height: 240, margin: "24px 12px 32px" }}><svg viewBox={`0 0 ${Math.max(800, individualTrend.length * 40)} 240`} preserveAspectRatio="none" style={{ width: "100%", height: "100%" }} aria-label="Employee sentiment trend"><polyline fill="none" stroke="var(--primary)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" points={individualTrend.map((point, index) => `${index * (Math.max(800, individualTrend.length * 40) / Math.max(1, individualTrend.length - 1))},${240 - point.score * 2.2}`).join(" ")} /></svg></div> : <p>No scored check-ins in this period.</p>}
+              {individualLoading ? <p>Loading employee analysis…</p> : individualError ? <p role="alert">{individualError}</p> : individualTrend.length ? <div style={{ height: 240, margin: "24px 12px 32px" }}><svg viewBox={`0 0 ${Math.max(800, individualTrend.length * 40)} 240`} preserveAspectRatio="none" style={{ width: "100%", height: "100%" }} aria-label="Employee sentiment trend"><polyline fill="none" stroke="var(--primary)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" points={individualTrend.map((point, index) => `${index * (Math.max(800, individualTrend.length * 40) / Math.max(1, individualTrend.length - 1))},${240 - point.score * 2.2}`).join(" ")} /></svg></div> : <p>No check-ins found for this period.</p>}
               <div className="admin-section-header"><h3 className="admin-section-title">Individual Check-in History</h3></div>
-              {individualRows.length > 0 && <div className="emp-table-scroll"><table className="emp-table" aria-label="Individual employee check-in history"><thead><tr><th className="emp-th">Date</th><th className="emp-th">Mood</th><th className="emp-th">Energy</th><th className="emp-th">Work Pressure</th><th className="emp-th">Leadership Request</th><th className="emp-th">Sentiment</th></tr></thead><tbody>{[...individualRows].reverse().map((row) => <tr key={row.checkInId}><td className="emp-td">{formatDate(row.checkInDate)}</td><td className="emp-td"><AnswerBadge label={MOOD_LABELS[row.mood] ?? String(row.mood)} type="mood" /></td><td className="emp-td"><AnswerBadge label={ENERGY_LABELS[row.energy] ?? String(row.energy)} type="energy" /></td><td className="emp-td"><AnswerBadge label={WORKLOAD_LABELS[row.workload] ?? String(row.workload)} type="workload" /></td><td className="emp-td">{row.requestedSupport ? "Yes" : "No"}</td><td className="emp-td"><SentimentBadge score={row.sentimentScore} /></td></tr>)}</tbody></table></div>}
+              {individualRows.length > 0 && <div className="emp-table-scroll"><table className="emp-table" aria-label="Individual employee check-in history"><thead><tr><th className="emp-th">Date</th><th className="emp-th">Mood</th><th className="emp-th">Energy</th><th className="emp-th">Work Pressure</th><th className="emp-th">Leadership Request</th><th className="emp-th">Sentiment</th></tr></thead><tbody>{[...individualRows].reverse().map((row) => <tr key={row.checkInId} className={`emp-tr ${row.sentimentScore !== null && row.sentimentScore < 40 ? "emp-tr--low" : ""}`}><td className="emp-td">{formatDate(row.checkInDate)}</td><td className="emp-td"><AnswerBadge label={MOOD_LABELS[row.mood] ?? String(row.mood)} type="mood" /></td><td className="emp-td"><AnswerBadge label={ENERGY_LABELS[row.energy] ?? String(row.energy)} type="energy" /></td><td className="emp-td"><AnswerBadge label={WORKLOAD_LABELS[row.workload] ?? String(row.workload)} type="workload" /></td><td className="emp-td">{row.requestedSupport ? "Yes" : "No"}</td><td className="emp-td"><SentimentBadge score={row.sentimentScore} /></td></tr>)}</tbody></table></div>}
             </>}
           </div>
         </section>
@@ -548,7 +541,7 @@ export function AdminEmployeesPage() {
                   </thead>
                   <tbody>
                     {rows.map((row) => (
-                      <tr key={row.checkInId} className="emp-tr">
+                      <tr key={row.checkInId} className={`emp-tr ${row.sentimentScore !== null && row.sentimentScore < 40 ? "emp-tr--low" : ""}`}>
                         {/* Employee */}
                         <td className="emp-td">
                           <div className="emp-employee-cell">
@@ -649,3 +642,4 @@ export function AdminEmployeesPage() {
     </>
   );
 }
+
