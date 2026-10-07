@@ -4,8 +4,8 @@ import { useCheckIns } from "../../features/checkin/useCheckIns";
 import { buildTrendData } from "../../features/checkin/checkInService";
 
 export function AdminPulseAnalyticsPage() {
-  const records = useCheckIns();
   const [days, setDays] = useState(30);
+  const records = useCheckIns(days);
   const chartData = useMemo(() => buildTrendData(records, days), [records, days]);
 
   return (

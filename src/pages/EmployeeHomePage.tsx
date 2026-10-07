@@ -3,17 +3,8 @@ import { ArrowRight, LogOut, Sparkles, CalendarDays, Check, Clock3, Loader2 } fr
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../features/auth/AuthContext";
 import { PulseGlyph } from "../components/PulseGlyph";
-import { getTodayCheckIn, type CheckInRecord } from "../features/checkin/checkInService";
-import { formatBusinessDateHeader } from "../utils/dateUtils";
-
-const week = [
-  { day: "Mon", value: 4 },
-  { day: "Tue", value: 4 },
-  { day: "Wed", value: 3 },
-  { day: "Thu", value: 3 },
-  { day: "Fri", value: 5 },
-  { day: "Sat", value: 4 },
-];
+import { getTodayCheckIn, getRecentCheckInsForUser, type CheckInRecord } from "../features/checkin/checkInService";
+import { formatBusinessDateHeader, getBusinessDate, shiftBusinessDate } from "../utils/dateUtils";
 
 export function EmployeeHomePage() {
   const { user, profile, signOut } = useAuth();
@@ -22,6 +13,9 @@ export function EmployeeHomePage() {
 
   const [checkingStatus, setCheckingStatus] = useState(true);
   const [todayRecord, setTodayRecord] = useState<CheckInRecord | null>(null);
+  const [checkIns, setCheckIns] = useState<CheckInRecord[]>([]);
+  const [statusError, setStatusError] = useState(false);
+  const [businessDate, setBusinessDate] = useState(getBusinessDate());
 
   const checkTodayPulse = useCallback(async () => {
     if (!user) {
@@ -33,9 +27,10 @@ export function EmployeeHomePage() {
     try {
       const record = await getTodayCheckIn(user.id);
       setTodayRecord(record);
+      setStatusError(false);
     } catch (err) {
       console.error("Failed to verify today's check-in status:", err);
-      setTodayRecord(null);
+      setStatusError(true);
     } finally {
       setCheckingStatus(false);
     }
@@ -44,6 +39,26 @@ export function EmployeeHomePage() {
   useEffect(() => {
     void checkTodayPulse();
   }, [checkTodayPulse]);
+
+  useEffect(() => {
+    let active = true;
+    const updateDateAndRecords = async () => {
+      const today = getBusinessDate();
+      if (today !== businessDate && active) {
+        setBusinessDate(today);
+        void checkTodayPulse();
+      }
+      if (user) {
+        try {
+          const records = await getRecentCheckInsForUser(user.id, shiftBusinessDate(today, -6), today);
+          if (active) setCheckIns(records);
+        } catch (error) { console.error("Failed to load check-in history:", error); }
+      }
+    };
+    void updateDateAndRecords();
+    const timer = window.setInterval(() => { void updateDateAndRecords(); }, 60_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [businessDate, checkTodayPulse, user]);
 
   const handleSignOut = async () => {
     await signOut();
@@ -80,6 +95,8 @@ export function EmployeeHomePage() {
               <span>Checking today's pulse...</span>
             </div>
           </div>
+        ) : statusError ? (
+          <div className="glass-panel pulse-cta-loading" role="alert"><p>Today's check-in status could not be verified. Please retry.</p><button type="button" className="secondary-button" onClick={() => void checkTodayPulse()}>Retry</button></div>
         ) : todayRecord ? (
           <div className="glass-panel pulse-completed-panel">
             <div className="pulse-completed-badge-row">
@@ -115,9 +132,9 @@ export function EmployeeHomePage() {
               <div className="eyebrow">
                 <Sparkles size={14} aria-hidden="true" /> Today's check-in
               </div>
-              <p>Four questions. Forty-five seconds. No performance review energy.</p>
+              <p>Four questions. Up to 90 seconds for the first three. No performance review energy.</p>
             </div>
-            <div className="time-chip">45 sec</div>
+            <div className="time-chip">30 sec × 3</div>
             <button
               className="primary-button large"
               type="button"
@@ -133,16 +150,9 @@ export function EmployeeHomePage() {
             <div className="eyebrow">
               <CalendarDays size={14} aria-hidden="true" /> This week
             </div>
-            <span className="week-count">6 check-ins</span>
+            <span className="week-count">{checkIns.filter((record) => record.date >= shiftBusinessDate(businessDate, -6) && record.date <= businessDate).length} check-ins</span>
           </div>
-          <div className="week-row">
-            {week.map((item) => (
-              <div key={item.day} className="week-cell">
-                <PulseGlyph value={item.value} kind="mood" size={44} />
-                <span>{item.day}</span>
-              </div>
-            ))}
-          </div>
+          {checkIns.length ? <div className="week-row">{checkIns.filter((record) => record.date >= shiftBusinessDate(businessDate, -6) && record.date <= businessDate).sort((a, b) => a.date.localeCompare(b.date)).map((record) => <div key={record.id} className="week-cell"><PulseGlyph value={record.mood} kind="mood" size={44} /><span>{new Intl.DateTimeFormat("en", { timeZone: "Asia/Kolkata", weekday: "short" }).format(new Date(`${record.date}T12:00:00+05:30`))}</span></div>)}</div> : <p>No check-ins in your history yet.</p>}
         </div>
       </section>
     </main>

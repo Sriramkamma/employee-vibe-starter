@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Users,
   Calendar,
@@ -16,15 +16,15 @@ import {
 } from "lucide-react";
 import {
   fetchEmployeeCheckIns,
-  fetchEmployeeSummary,
   fetchEmployeeOptions,
   fetchIndividualCheckIns,
+  fetchLeadershipSignalRefs,
   MOOD_LABELS,
   ENERGY_LABELS,
   WORKLOAD_LABELS,
   type EmployeeCheckInRow,
-  type EmployeeSummary,
   type EmployeeOption,
+  type LeadershipSignalRef,
 } from "../../features/admin/adminEmployeesService";
 
 import {
@@ -32,12 +32,15 @@ import {
   getBusinessDateDaysAgo,
   formatDisplayDate,
 } from "../../utils/dateUtils";
+import { useAuth } from "../../features/auth/AuthContext";
+import { supabase } from "../../lib/supabase";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const PAGE_SIZE = 25;
 
-type QuickRange = "today" | "7d" | "30d" | "custom" | "";
+type DateMode = "today" | "yesterday" | "7d" | "30d" | "numberOfDays" | "customRange";
+type EmployeeFilter = { employeeId: string; dateMode: DateMode; numberOfDays: string; fromDate: string; toDate: string };
 
 function todayISO(): string {
   return getBusinessDate();
@@ -86,33 +89,29 @@ function AnswerBadge({
 // ─── Page component ───────────────────────────────────────────────────────────
 
 export function AdminEmployeesPage() {
+  const { profile } = useAuth();
+  const organizationId = profile?.organizationId ?? "";
   const [employeeOptions, setEmployeeOptions] = useState<EmployeeOption[]>([]);
   const [employeeSearch, setEmployeeSearch] = useState("");
-  const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
-  const [numberOfDays, setNumberOfDays] = useState("7");
-  const [analysisFrom, setAnalysisFrom] = useState(() => offsetISO(6));
-  const [analysisTo, setAnalysisTo] = useState(() => todayISO());
-  const [customAnalysis, setCustomAnalysis] = useState(false);
+  const [employeeMenuOpen, setEmployeeMenuOpen] = useState(false);
+  const initialTo = todayISO();
+  const initialFrom = offsetISO(29);
+  const initialFilter: EmployeeFilter = { employeeId: "", dateMode: "30d", numberOfDays: "7", fromDate: initialFrom, toDate: initialTo };
+  const [draftFilter, setDraftFilter] = useState<EmployeeFilter>(initialFilter);
+  const [appliedFilter, setAppliedFilter] = useState<EmployeeFilter>(initialFilter);
+  const [filterValidation, setFilterValidation] = useState("");
   const [individualRows, setIndividualRows] = useState<EmployeeCheckInRow[]>([]);
   const [individualLoading, setIndividualLoading] = useState(false);
-  const [individualError, setIndividualError] = useState<string | null>(null);
   const [selectedMessageRow, setSelectedMessageRow] = useState<EmployeeCheckInRow | null>(null);
+  const [signalRefs, setSignalRefs] = useState<LeadershipSignalRef[]>([]);
+  const [selectedMessageSignal, setSelectedMessageSignal] = useState<LeadershipSignalRef | null>(null);
+  const [notingSignalId, setNotingSignalId] = useState<string | null>(null);
+  const [noteError, setNoteError] = useState<string | null>(null);
 
   useEffect(() => {
-    void fetchEmployeeOptions().then(setEmployeeOptions).catch((err) => setIndividualError(err.message));
-  }, []);
-
-  useEffect(() => {
-    if (!selectedEmployeeId) { setIndividualRows([]); return; }
-    let active = true;
-    setIndividualLoading(true);
-    setIndividualError(null);
-    void fetchIndividualCheckIns(selectedEmployeeId, analysisFrom, analysisTo)
-      .then((records) => { if (active) setIndividualRows(records); })
-      .catch((err) => { if (active) setIndividualError(err instanceof Error ? err.message : "Unable to load employee analysis."); })
-      .finally(() => { if (active) setIndividualLoading(false); });
-    return () => { active = false; };
-  }, [selectedEmployeeId, analysisFrom, analysisTo]);
+    if (!organizationId) return;
+    void fetchEmployeeOptions(organizationId).then(setEmployeeOptions).catch((err) => setError(err instanceof Error ? err.message : "Unable to load employee data."));
+  }, [organizationId]);
 
   const matchingEmployees = employeeOptions.filter((employee) =>
     `${employee.fullName} ${employee.email ?? ""}`.toLowerCase().includes(employeeSearch.toLowerCase()),
@@ -122,117 +121,116 @@ export function AdminEmployeesPage() {
     ? Math.round((scoredIndividualRows.reduce((sum, row) => sum + (row.sentimentScore ?? 0), 0) / scoredIndividualRows.length) * 10) / 10
     : null;
   const individualScores = scoredIndividualRows.map((row) => row.sentimentScore as number);
-  const individualTrend = individualRows.reduce<{ date: string; score: number; count: number }[]>((days, row) => {
-    if (row.sentimentScore === null) return days;
-    const day = days.find((item) => item.date === row.checkInDate);
-    if (day) { day.score = Math.round((day.score * day.count + row.sentimentScore) / (day.count + 1)); day.count += 1; }
-    else days.push({ date: row.checkInDate, score: row.sentimentScore, count: 1 });
-    return days;
-  }, []);
   // ── Filter state ────────────────────────────────────────────────────────────
-  const [quickRange, setQuickRange] = useState<QuickRange>("");
-  const [fromDate, setFromDate] = useState<string>("");
-  const [toDate, setToDate] = useState<string>("");
-  const [appliedFrom, setAppliedFrom] = useState<string | null>(null);
-  const [appliedTo, setAppliedTo] = useState<string | null>(null);
-
   // ── Pagination ──────────────────────────────────────────────────────────────
   const [page, setPage] = useState(0);
 
   // ── Data ────────────────────────────────────────────────────────────────────
   const [rows, setRows] = useState<EmployeeCheckInRow[]>([]);
   const [totalCount, setTotalCount] = useState(0);
-  const [summary, setSummary] = useState<EmployeeSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const loadRequestId = useRef(0);
 
   // ── Derived ─────────────────────────────────────────────────────────────────
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
-  const isFiltered = Boolean(appliedFrom || appliedTo);
 
   // ── Data fetching ────────────────────────────────────────────────────────────
   const loadData = useCallback(
-    async (from: string | null, to: string | null, pageIndex: number) => {
+    async (filter: EmployeeFilter, pageIndex: number) => {
+      const requestId = ++loadRequestId.current;
       setLoading(true);
+      setIndividualLoading(Boolean(filter.employeeId));
       setError(null);
+      setRows([]); setIndividualRows([]); setTotalCount(0);
 
       try {
-        const [result, summaryResult] = await Promise.all([
+        const [result, analysisResult, signalResult] = await Promise.all([
           fetchEmployeeCheckIns({
-            fromDate: from,
-            toDate: to,
+            fromDate: filter.fromDate,
+            toDate: filter.toDate,
+            employeeId: filter.employeeId || null,
+            organizationId,
             page: pageIndex,
             pageSize: PAGE_SIZE,
           }),
-          fetchEmployeeSummary({ fromDate: from, toDate: to }),
+          filter.employeeId ? fetchIndividualCheckIns(filter.employeeId, filter.fromDate, filter.toDate) : Promise.resolve([]),
+          fetchLeadershipSignalRefs(organizationId, filter.fromDate, filter.toDate),
         ]);
+        if (requestId !== loadRequestId.current) return;
 
         setRows(result.rows);
         setTotalCount(result.totalCount);
-        setSummary(summaryResult);
+        setIndividualRows(analysisResult);
+        setSignalRefs(signalResult);
       } catch (err) {
+        if (requestId !== loadRequestId.current) return;
         setError(
           err instanceof Error
             ? err.message
             : "Failed to load employee data. Please try again.",
         );
       } finally {
-        setLoading(false);
+        if (requestId === loadRequestId.current) { setLoading(false); setIndividualLoading(false); }
       }
     },
-    [],
+    [organizationId],
   );
 
   useEffect(() => {
-    void loadData(appliedFrom, appliedTo, page);
-  }, [loadData, appliedFrom, appliedTo, page]);
+    void loadData(appliedFilter, page);
+  }, [loadData, appliedFilter, page]);
 
   // ── Quick range handler ──────────────────────────────────────────────────────
-  function applyQuickRange(range: QuickRange) {
-    setQuickRange(range);
-
-    if (range === "today") {
-      const t = todayISO();
-      setFromDate(t);
-      setToDate(t);
-      setAppliedFrom(t);
-      setAppliedTo(t);
-    } else if (range === "7d") {
-      const f = offsetISO(6);
-      const t = todayISO();
-      setFromDate(f);
-      setToDate(t);
-      setAppliedFrom(f);
-      setAppliedTo(t);
-    } else if (range === "30d") {
-      const f = offsetISO(29);
-      const t = todayISO();
-      setFromDate(f);
-      setToDate(t);
-      setAppliedFrom(f);
-      setAppliedTo(t);
-    } else if (range === "custom") {
-      // Just switch to custom mode; user fills dates manually
-    }
-
-    setPage(0);
+  function chooseDateMode(dateMode: DateMode) {
+    const today = todayISO(); let fromDate = draftFilter.fromDate;
+    if (dateMode === "today") fromDate = today;
+    if (dateMode === "yesterday") fromDate = offsetISO(1);
+    if (dateMode === "7d") fromDate = offsetISO(6);
+    if (dateMode === "30d") fromDate = offsetISO(29);
+    if (dateMode === "numberOfDays") fromDate = offsetISO(Math.max(0, Number(draftFilter.numberOfDays) - 1));
+    setDraftFilter((current) => ({ ...current, dateMode, fromDate, toDate: dateMode === "yesterday" ? fromDate : today }));
+    setFilterValidation("");
   }
-
   function handleApplyFilter() {
-    setAppliedFrom(fromDate || null);
-    setAppliedTo(toDate || null);
-    setPage(0);
+    let fromDate = draftFilter.fromDate; let toDate = draftFilter.toDate;
+    if (draftFilter.dateMode === "numberOfDays") {
+      if (!/^\d+$/.test(draftFilter.numberOfDays) || Number(draftFilter.numberOfDays) < 1) { setFilterValidation("Enter a valid number of days greater than 0."); return; }
+      fromDate = offsetISO(Number(draftFilter.numberOfDays) - 1); toDate = todayISO();
+    }
+    if (!fromDate || !toDate) { setFilterValidation("Select both dates for the custom date range."); return; }
+    if (fromDate > toDate) { setFilterValidation("From date must be before or equal to To date."); return; }
+    setFilterValidation(""); setAppliedFilter({ ...draftFilter, fromDate, toDate });
+    setDraftFilter((current) => ({ ...current, fromDate, toDate })); setPage(0);
   }
-
   function handleClearFilter() {
-    setQuickRange("");
-    setFromDate("");
-    setToDate("");
-    setAppliedFrom(null);
-    setAppliedTo(null);
-    setPage(0);
+    const reset = { ...initialFilter, fromDate: offsetISO(29), toDate: todayISO() };
+    setDraftFilter(reset); setAppliedFilter(reset); setEmployeeSearch(""); setEmployeeMenuOpen(false); setFilterValidation(""); setPage(0);
   }
-
+  function signalForCheckIn(row: EmployeeCheckInRow) {
+    const byId = signalRefs.find((signal) => signal.checkInId === row.checkInId);
+    if (byId) return byId;
+    const matches = signalRefs.filter((signal) => signal.employeeId === row.userId && signal.date === row.checkInDate);
+    return matches.length === 1 ? matches[0] : null;
+  }
+  function openLeadershipMessage(row: EmployeeCheckInRow) {
+    const employee = employeeOptions.find((option) => option.id === row.userId);
+    setSelectedMessageRow({ ...row, fullName: row.fullName || employee?.fullName || "Employee", email: row.email || employee?.email || null });
+    setSelectedMessageSignal(signalForCheckIn(row));
+    setNoteError(null);
+  }
+  async function noteLeadershipRequest() {
+    if (!selectedMessageSignal) { setNoteError("Unable to identify this leadership request."); return; }
+    setNotingSignalId(selectedMessageSignal.id); setNoteError(null);
+    try {
+      const { data, error: updateError } = await supabase.from("signals").update({ status: "acknowledged" }).eq("id", selectedMessageSignal.id).select("id").single();
+      if (updateError || !data) throw updateError ?? new Error("Signal update was not confirmed");
+      const updated = { ...selectedMessageSignal, status: "acknowledged" };
+      setSignalRefs((current) => current.map((signal) => signal.id === updated.id ? updated : signal));
+      setSelectedMessageSignal(updated);
+    } catch { setNoteError("Unable to mark this request as noted. Please try again."); }
+    finally { setNotingSignalId(null); }
+  }
   // ─── Render ─────────────────────────────────────────────────────────────────
   return (
     <>
@@ -248,33 +246,19 @@ export function AdminEmployeesPage() {
 
       <div className="admin-content">
         <section className="admin-section">
-          <div className="admin-section-header"><h2 className="admin-section-title">Individual Employee Analysis</h2></div>
+          <div className="admin-section-header"><h2 className="admin-section-title"><Filter size={18} style={{ marginRight: 8 }} />Employee &amp; Date Filters</h2><button className="emp-clear-btn" onClick={handleClearFilter}><X size={14} />Reset Filters</button></div>
           <div className="admin-panel emp-filter-panel">
-            <div className="emp-date-inputs">
-              <div className="emp-date-field">
-                <label htmlFor="employee-search" className="emp-date-label"><Search size={14} /> Search employee</label>
-                <input id="employee-search" className="emp-date-input" placeholder="Name or email" value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} />
-              </div>
-              <div className="emp-date-field">
-                <label htmlFor="employee-select" className="emp-date-label">Selected Employee</label>
-                <select id="employee-select" className="emp-date-input" value={selectedEmployeeId} onChange={(event) => setSelectedEmployeeId(event.target.value)}>
-                  <option value="">Select an employee</option>
-                  {matchingEmployees.map((employee) => <option key={employee.id} value={employee.id}>{employee.fullName}{employee.email ? ` — ${employee.email}` : ""}</option>)}
-                </select>
-              </div>
+            <div className="employee-filter-grid">
+              <div className="emp-date-field employee-combo"><label htmlFor="employee-filter-search" className="emp-date-label">Employee</label><div className="employee-search-wrap"><Search size={17} aria-hidden="true" /><input id="employee-filter-search" className="emp-date-input" placeholder="Search name or email" autoComplete="off" value={employeeMenuOpen ? employeeSearch : (employeeOptions.find((employee) => employee.id === draftFilter.employeeId)?.fullName ?? "")} onFocus={() => { setEmployeeMenuOpen(true); setEmployeeSearch(""); }} onChange={(event) => { setEmployeeSearch(event.target.value); setEmployeeMenuOpen(true); }} aria-expanded={employeeMenuOpen} aria-controls="employee-filter-options" aria-autocomplete="list" />{draftFilter.employeeId && <button type="button" aria-label="Clear employee selection" onClick={() => { setDraftFilter((current) => ({ ...current, employeeId: "" })); setEmployeeSearch(""); }}>×</button>}</div>{employeeMenuOpen && <div className="employee-combo-options" id="employee-filter-options" role="listbox"><button type="button" role="option" aria-selected={!draftFilter.employeeId} onClick={() => { setDraftFilter((current) => ({ ...current, employeeId: "" })); setEmployeeSearch(""); setEmployeeMenuOpen(false); }}><strong>All Employees</strong><span>View the whole organization</span></button>{matchingEmployees.map((employee) => <button type="button" role="option" aria-selected={draftFilter.employeeId === employee.id} key={employee.id} onClick={() => { setDraftFilter((current) => ({ ...current, employeeId: employee.id })); setEmployeeSearch(""); setEmployeeMenuOpen(false); }}><strong>{employee.fullName}</strong><span>{employee.email || "Employee"}</span></button>)}{matchingEmployees.length === 0 && <p className="employee-no-results">No employees match that search.</p>}</div>}<span className="employee-filter-help">Search by name or work email, or choose All Employees.</span></div>
+              <div className="emp-date-field"><label htmlFor="employee-date-mode" className="emp-date-label">Show records from</label><select id="employee-date-mode" className="emp-date-input" value={draftFilter.dateMode} onChange={(event) => chooseDateMode(event.target.value as DateMode)}><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="numberOfDays">Custom number of days</option><option value="customRange">Custom date range</option></select><span className="employee-filter-help">Dates use the Asia/Kolkata business calendar.</span></div>
             </div>
-            <div className="emp-quick-ranges" style={{ marginTop: 16 }}>
-              <button className={`emp-range-btn ${!customAnalysis ? "active" : ""}`} onClick={() => setCustomAnalysis(false)}>Number of Days</button>
-              <button className={`emp-range-btn ${customAnalysis ? "active" : ""}`} onClick={() => setCustomAnalysis(true)}>Custom Date Range</button>
-            </div>
-            {!customAnalysis ? <div className="emp-date-inputs">
-              <div className="emp-date-field"><label htmlFor="analysis-days" className="emp-date-label">Number of Days</label><input id="analysis-days" type="number" min="1" step="1" className="emp-date-input" value={numberOfDays} onChange={(event) => setNumberOfDays(event.target.value)} /></div>
-              <div className="emp-filter-actions"><button className="secondary-button emp-apply-btn" disabled={!selectedEmployeeId || !/^\\d+$/.test(numberOfDays) || Number(numberOfDays) < 1 || individualLoading} onClick={() => { const days = Number(numberOfDays); setAnalysisFrom(offsetISO(days - 1)); setAnalysisTo(todayISO()); }}>Apply</button></div>
-            </div> : <div className="emp-date-inputs">
-              <div className="emp-date-field"><label htmlFor="individual-from" className="emp-date-label">From Date</label><input id="individual-from" type="date" className="emp-date-input" value={analysisFrom} max={analysisTo || todayISO()} onChange={(event) => setAnalysisFrom(event.target.value)} /></div>
-              <div className="emp-date-field"><label htmlFor="individual-to" className="emp-date-label">To Date</label><input id="individual-to" type="date" className="emp-date-input" value={analysisTo} min={analysisFrom} max={todayISO()} onChange={(event) => setAnalysisTo(event.target.value)} /></div>
-            </div>}
-            {selectedEmployeeId && <>
+            {draftFilter.dateMode === "numberOfDays" && <div className="emp-date-inputs"><div className="emp-date-field"><label htmlFor="employee-days" className="emp-date-label">Number of days</label><div className="employee-days-control"><span>Past</span><input id="employee-days" className="emp-date-input" inputMode="numeric" value={draftFilter.numberOfDays} onChange={(event) => setDraftFilter((current) => ({ ...current, numberOfDays: event.target.value }))} /><span>days, including today</span></div></div></div>}
+            {draftFilter.dateMode === "customRange" && <div className="emp-date-inputs"><div className="emp-date-field"><label htmlFor="employee-from" className="emp-date-label">From date</label><input id="employee-from" type="date" className="emp-date-input" value={draftFilter.fromDate} max={draftFilter.toDate || todayISO()} onChange={(event) => setDraftFilter((current) => ({ ...current, fromDate: event.target.value }))} /></div><div className="emp-date-field"><label htmlFor="employee-to" className="emp-date-label">To date</label><input id="employee-to" type="date" className="emp-date-input" value={draftFilter.toDate} max={todayISO()} onChange={(event) => setDraftFilter((current) => ({ ...current, toDate: event.target.value }))} /></div></div>}            {filterValidation && <p className="emp-filter-error" role="alert">{filterValidation}</p>}
+            <div className="emp-filter-actions"><button className="secondary-button emp-apply-btn" onClick={handleApplyFilter} disabled={loading}>Apply Filter</button></div>
+            <div className="emp-active-filter">Showing <strong>{appliedFilter.employeeId ? employeeOptions.find((employee) => employee.id === appliedFilter.employeeId)?.fullName ?? "selected employee" : "all employees"}</strong> from <strong>{formatDate(appliedFilter.fromDate)}</strong> to <strong>{formatDate(appliedFilter.toDate)}</strong></div>
+          </div>
+          <div className="admin-section-header"><h2 className="admin-section-title">Individual Employee Analysis</h2></div>
+          <div className="admin-panel">            {appliedFilter.employeeId && <>
               <div className="kpi-grid" style={{ marginTop: 20 }}>
                 <div className="kpi-card"><span className="kpi-title">Average Sentiment</span><span className="kpi-value">{individualLoading ? "…" : individualAverage === null ? "—" : `${individualAverage}%`}</span><div className="kpi-change neutral">Across actual scored check-ins</div></div>
                 <div className="kpi-card"><span className="kpi-title">Check-ins</span><span className="kpi-value">{individualLoading ? "…" : individualRows.length}</span><div className="kpi-change neutral">In selected period</div></div>
@@ -282,193 +266,12 @@ export function AdminEmployeesPage() {
                 <div className="kpi-card"><span className="kpi-title">Highest Sentiment</span><span className="kpi-value">{individualLoading ? "…" : individualScores.length ? `${Math.max(...individualScores)}%` : "—"}</span></div>
                 <div className="kpi-card"><span className="kpi-title">Latest Sentiment</span><span className="kpi-value">{individualLoading ? "…" : individualScores.length ? `${[...individualRows].reverse().find((row) => row.sentimentScore !== null)?.sentimentScore}%` : "—"}</span></div>
               </div>
-              <div className="admin-section-header" style={{ marginTop: 24 }}><h3 className="admin-section-title">Sentiment Trend</h3><span className="emp-record-count">Latest: {individualScores.length ? `${individualScores[individualScores.length - 1]}%` : "—"}</span></div>
-              {individualLoading ? <p>Loading employee analysis…</p> : individualError ? <p role="alert">{individualError}</p> : individualTrend.length ? <div style={{ height: 240, margin: "24px 12px 32px" }}><svg viewBox={`0 0 ${Math.max(800, individualTrend.length * 40)} 240`} preserveAspectRatio="none" style={{ width: "100%", height: "100%" }} aria-label="Employee sentiment trend"><polyline fill="none" stroke="var(--primary)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" points={individualTrend.map((point, index) => `${index * (Math.max(800, individualTrend.length * 40) / Math.max(1, individualTrend.length - 1))},${240 - point.score * 2.2}`).join(" ")} /></svg></div> : <p>No check-ins found for this period.</p>}
               <div className="admin-section-header"><h3 className="admin-section-title">Individual Check-in History</h3></div>
-              {individualRows.length > 0 && <div className="emp-table-scroll"><table className="emp-table" aria-label="Individual employee check-in history"><thead><tr><th className="emp-th">Date</th><th className="emp-th">Mood</th><th className="emp-th">Energy</th><th className="emp-th">Work Pressure</th><th className="emp-th">Leadership Request</th><th className="emp-th">Sentiment</th></tr></thead><tbody>{[...individualRows].reverse().map((row) => { const emp = employeeOptions.find((e) => e.id === selectedEmployeeId); return <tr key={row.checkInId} className={`emp-tr ${row.sentimentScore !== null && row.sentimentScore < 40 ? "emp-tr--low" : ""}`}><td className="emp-td">{formatDate(row.checkInDate)}</td><td className="emp-td"><AnswerBadge label={MOOD_LABELS[row.mood] ?? String(row.mood)} type="mood" /></td><td className="emp-td"><AnswerBadge label={ENERGY_LABELS[row.energy] ?? String(row.energy)} type="energy" /></td><td className="emp-td"><AnswerBadge label={WORKLOAD_LABELS[row.workload] ?? String(row.workload)} type="workload" /></td><td className="emp-td"><div className="emp-support-cell"><AnswerBadge label={row.requestedSupport ? "Yes, please" : "Not right now"} type="support" />{row.requestedSupport && <button type="button" className="emp-msg-button" onClick={() => setSelectedMessageRow({ ...row, fullName: emp?.fullName || "Employee", email: emp?.email || null })} title="View leadership message" aria-label="View leadership message"><MessageSquare size={12} aria-hidden="true" /><span>View message</span></button>}</div></td><td className="emp-td"><SentimentBadge score={row.sentimentScore} /></td></tr>; })}</tbody></table></div>}
+              {individualRows.length > 0 && <div className="emp-table-scroll"><table className="emp-table" aria-label="Individual employee check-in history"><thead><tr><th className="emp-th">Date</th><th className="emp-th">Mood</th><th className="emp-th">Energy</th><th className="emp-th">Work Pressure</th><th className="emp-th">Leadership Request</th><th className="emp-th">Sentiment</th></tr></thead><tbody>{[...individualRows].reverse().map((row) => { const emp = employeeOptions.find((e) => e.id === appliedFilter.employeeId); return <tr key={row.checkInId} className={`emp-tr ${row.sentimentScore !== null && row.sentimentScore < 40 ? "emp-tr--low" : ""}`}><td className="emp-td">{formatDate(row.checkInDate)}</td><td className="emp-td"><AnswerBadge label={MOOD_LABELS[row.mood] ?? String(row.mood)} type="mood" /></td><td className="emp-td"><AnswerBadge label={ENERGY_LABELS[row.energy] ?? String(row.energy)} type="energy" /></td><td className="emp-td"><AnswerBadge label={WORKLOAD_LABELS[row.workload] ?? String(row.workload)} type="workload" /></td><td className="emp-td"><div className="emp-support-cell"><AnswerBadge label={row.requestedSupport ? "Yes, please" : "Not right now"} type="support" />{row.requestedSupport && <button type="button" className="emp-msg-button" onClick={() => openLeadershipMessage(row)} title="View leadership message" aria-label="View leadership message"><MessageSquare size={12} aria-hidden="true" /><span>View message</span></button>}</div></td><td className="emp-td"><SentimentBadge score={row.sentimentScore} /></td></tr>; })}</tbody></table></div>}
             </>}
+            {!appliedFilter.employeeId && <div className="admin-empty-state"><p>Select an employee to view individual analysis.</p></div>}
           </div>
         </section>
-        {/* ── KPI summary cards ────────────────────────────────────────────── */}
-        <div className="kpi-grid">
-          <div className="kpi-card">
-            <span className="kpi-title">Total Employees</span>
-            <span className="kpi-value">
-              {summary ? summary.totalEmployees : "—"}
-            </span>
-            <div className="kpi-change neutral">
-              <Users size={16} style={{ marginRight: 4 }} />
-              Employee accounts
-            </div>
-          </div>
-
-          <div className="kpi-card">
-            <span className="kpi-title">
-              {isFiltered ? "Check-ins (filtered)" : "Total Check-ins"}
-            </span>
-            <span className="kpi-value">
-              {summary ? summary.totalCheckIns : "—"}
-            </span>
-            <div className="kpi-change neutral">
-              <Calendar size={16} style={{ marginRight: 4 }} />
-              Recorded responses
-            </div>
-          </div>
-
-          <div className="kpi-card">
-            <span className="kpi-title">Average Sentiment</span>
-            <span className="kpi-value">
-              {summary && summary.totalCheckIns > 0
-                ? `${summary.averageSentiment}%`
-                : "—"}
-            </span>
-            <div
-              className={`kpi-change ${
-                summary && summary.averageSentiment >= 75
-                  ? "positive"
-                  : summary && summary.averageSentiment >= 50
-                  ? "neutral"
-                  : "negative"
-              }`}
-            >
-              <Activity size={16} style={{ marginRight: 4 }} />
-              {isFiltered ? "In selected range" : "All time"}
-            </div>
-          </div>
-
-          <div className="kpi-card">
-            <span className="kpi-title">Leadership Requests</span>
-            <span className="kpi-value">
-              {summary ? summary.leadershipRequests : "—"}
-            </span>
-            <div
-              className={`kpi-change ${
-                summary && summary.leadershipRequests > 0
-                  ? "negative"
-                  : "positive"
-              }`}
-            >
-              <HeartHandshake size={16} style={{ marginRight: 4 }} />
-              {summary && summary.leadershipRequests > 0
-                ? "Follow-up needed"
-                : "None pending"}
-            </div>
-          </div>
-        </div>
-
-        {/* ── Date filter panel ─────────────────────────────────────────────── */}
-        <section className="admin-section">
-          <div className="admin-section-header">
-            <h2 className="admin-section-title">
-              <Filter size={18} style={{ marginRight: 8, verticalAlign: "middle" }} />
-              Date Filter
-            </h2>
-            {isFiltered && (
-              <button
-                className="emp-clear-btn"
-                onClick={handleClearFilter}
-                aria-label="Clear date filter"
-              >
-                <X size={14} />
-                Clear Filter
-              </button>
-            )}
-          </div>
-
-          <div className="admin-panel emp-filter-panel">
-            {/* Quick ranges */}
-            <div className="emp-quick-ranges">
-              {(
-                [
-                  { key: "today", label: "Today" },
-                  { key: "7d",    label: "Last 7 Days" },
-                  { key: "30d",   label: "Last 30 Days" },
-                  { key: "custom", label: "Custom Range" },
-                ] as { key: QuickRange; label: string }[]
-              ).map(({ key, label }) => (
-                <button
-                  key={key}
-                  className={`emp-range-btn ${quickRange === key ? "active" : ""}`}
-                  onClick={() => applyQuickRange(key)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {/* Custom date inputs */}
-            <div className="emp-date-inputs">
-              <div className="emp-date-field">
-                <label htmlFor="emp-from-date" className="emp-date-label">
-                  From Date
-                </label>
-                <input
-                  id="emp-from-date"
-                  type="date"
-                  className="emp-date-input"
-                  value={fromDate}
-                  max={toDate || todayISO()}
-                  onChange={(e) => {
-                    setFromDate(e.target.value);
-                    setQuickRange("custom");
-                  }}
-                />
-              </div>
-
-              <div className="emp-date-field">
-                <label htmlFor="emp-to-date" className="emp-date-label">
-                  To Date
-                </label>
-                <input
-                  id="emp-to-date"
-                  type="date"
-                  className="emp-date-input"
-                  value={toDate}
-                  min={fromDate}
-                  max={todayISO()}
-                  onChange={(e) => {
-                    setToDate(e.target.value);
-                    setQuickRange("custom");
-                  }}
-                />
-              </div>
-
-              <div className="emp-filter-actions">
-                <button
-                  className="secondary-button emp-apply-btn"
-                  onClick={handleApplyFilter}
-                  disabled={loading}
-                >
-                  Apply Filter
-                </button>
-                {isFiltered && (
-                  <button
-                    className="emp-clear-btn"
-                    onClick={handleClearFilter}
-                    aria-label="Reset filter"
-                  >
-                    <X size={14} /> Reset
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Active filter label */}
-            {isFiltered && (
-              <div className="emp-active-filter">
-                Showing check-ins from{" "}
-                <strong>
-                  {appliedFrom ? formatDate(appliedFrom) : "—"}
-                </strong>{" "}
-                to{" "}
-                <strong>
-                  {appliedTo ? formatDate(appliedTo) : "today"}
-                </strong>
-              </div>
-            )}
-          </div>
-        </section>
-
         {/* ── Employee check-in table ──────────────────────────────────────── */}
         <section className="admin-section">
           <div className="admin-section-header">
@@ -498,7 +301,7 @@ export function AdminEmployeesPage() {
                 <button
                   className="secondary-button"
                   style={{ width: "auto", padding: "10px 24px", marginTop: 8 }}
-                  onClick={() => void loadData(appliedFrom, appliedTo, page)}
+                  onClick={() => void loadData(appliedFilter, page)}
                 >
                   Try Again
                 </button>
@@ -510,11 +313,7 @@ export function AdminEmployeesPage() {
               <div className="emp-state-overlay admin-empty-state">
                 <SearchX size={36} />
                 <h3>No check-ins found</h3>
-                <p>
-                  {isFiltered
-                    ? "No employee check-ins match the selected date range. Try adjusting or clearing the filter."
-                    : "No employee check-ins have been recorded yet."}
-                </p>
+                <p>No employee check-ins match the selected employee and date range.</p>
               </div>
             )}
 
@@ -592,7 +391,7 @@ export function AdminEmployeesPage() {
                               <button
                                 type="button"
                                 className="emp-msg-button"
-                                onClick={() => setSelectedMessageRow(row)}
+                                onClick={() => openLeadershipMessage(row)}
                                 title="View leadership message"
                                 aria-label={`View leadership message from ${row.fullName}`}
                               >
@@ -651,99 +450,14 @@ export function AdminEmployeesPage() {
 
       {/* ── Detail Modal for Leadership Support Message ── */}
       {selectedMessageRow && (
-        <div
-          className="vibe-modal-overlay"
-          onClick={() => setSelectedMessageRow(null)}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="leadership-modal-title"
-        >
-          <div
-            className="vibe-modal-panel reveal-up"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="vibe-modal-header">
-              <div className="vibe-modal-badge">
-                <MessageSquare size={18} style={{ color: "#b7791f" }} aria-hidden="true" />
-                <span id="leadership-modal-title" className="vibe-modal-title">
-                  Leadership Support Request
-                </span>
-              </div>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => setSelectedMessageRow(null)}
-                aria-label="Close message details"
-                style={{ width: "36px", height: "36px", minWidth: "36px", borderRadius: "10px" }}
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="vibe-modal-body">
-              {/* Metadata Grid */}
-              <div className="vibe-modal-meta-grid">
-                <div className="vibe-modal-meta-item">
-                  <span className="vibe-modal-meta-label">Employee</span>
-                  <strong className="vibe-modal-meta-val">{selectedMessageRow.fullName}</strong>
-                  {selectedMessageRow.email && (
-                    <span className="vibe-modal-meta-sub">{selectedMessageRow.email}</span>
-                  )}
-                </div>
-
-                <div className="vibe-modal-meta-item">
-                  <span className="vibe-modal-meta-label">Check-in Date</span>
-                  <strong className="vibe-modal-meta-val">{formatDate(selectedMessageRow.checkInDate)}</strong>
-                </div>
-
-                <div className="vibe-modal-meta-item">
-                  <span className="vibe-modal-meta-label">Sentiment</span>
-                  <div style={{ marginTop: "4px" }}>
-                    <SentimentBadge score={selectedMessageRow.sentimentScore} />
-                  </div>
-                </div>
-
-                <div className="vibe-modal-meta-item">
-                  <span className="vibe-modal-meta-label">Work Pressure</span>
-                  <div style={{ marginTop: "4px" }}>
-                    <AnswerBadge
-                      label={WORKLOAD_LABELS[selectedMessageRow.workload] ?? String(selectedMessageRow.workload)}
-                      type="workload"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Message Container */}
-              <div className="vibe-modal-msg-container">
-                <span className="vibe-modal-meta-label">Employee Message</span>
-                <div className="vibe-modal-msg-card">
-                  {selectedMessageRow.leadershipMessage?.trim() ? (
-                    <p className="vibe-modal-msg-text">
-                      "{selectedMessageRow.leadershipMessage.trim()}"
-                    </p>
-                  ) : (
-                    <p className="vibe-modal-msg-empty">
-                      No additional message provided.
-                    </p>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="vibe-modal-footer">
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => setSelectedMessageRow(null)}
-              >
-                Close
-              </button>
-            </div>
-          </div>
+        <div className="vibe-modal-overlay" onClick={() => setSelectedMessageRow(null)} role="presentation">
+          <section className="vibe-modal-panel reveal-up" role="dialog" aria-modal="true" aria-labelledby="leadership-modal-title" onClick={(event) => event.stopPropagation()}>
+            <div className="vibe-modal-header"><div className="vibe-modal-badge"><MessageSquare size={18} aria-hidden="true" /><h2 id="leadership-modal-title" className="vibe-modal-title">Leadership Request</h2></div><button type="button" className="icon-button" onClick={() => setSelectedMessageRow(null)} aria-label="Close message details"><X size={16} /></button></div>
+            <div className="vibe-modal-body"><p className="leadership-message-byline"><strong>{selectedMessageRow.fullName}</strong> - {formatDate(selectedMessageRow.checkInDate)}</p><div className="vibe-modal-msg-container"><span className="vibe-modal-meta-label">Message to Leadership</span><div className="vibe-modal-msg-card"><p className="vibe-modal-msg-text">{selectedMessageRow.leadershipMessage?.trim() ? selectedMessageRow.leadershipMessage : "No message was provided."}</p></div></div>{selectedMessageSignal?.status === "acknowledged" && <p className="employee-note-success" role="status">Request noted. It will no longer appear in active requests.</p>}{noteError && <p className="emp-filter-error" role="alert">{noteError}</p>}{!selectedMessageSignal && <p className="emp-filter-error" role="status">No unique persisted signal was found for this check-in; it cannot be marked noted from here.</p>}</div>
+            <div className="vibe-modal-footer"><button type="button" className="secondary-button" disabled={!selectedMessageSignal || !(["new", "in_review"].includes(selectedMessageSignal.status)) || notingSignalId === selectedMessageSignal?.id} onClick={() => void noteLeadershipRequest()}>{notingSignalId === selectedMessageSignal?.id ? "Saving..." : "Noted"}</button><button type="button" className="secondary-button" onClick={() => setSelectedMessageRow(null)}>Close</button></div>
+          </section>
         </div>
-      )}
-    </>
+      )}    </>
   );
 }
 

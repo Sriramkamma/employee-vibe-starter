@@ -5,6 +5,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  useRef,
   type ReactNode,
 } from "react";
 
@@ -98,11 +99,13 @@ export function AuthProvider({
   const [user, setUser] = useState<AuthUser | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const sessionVersion = useRef(0);
 
   const refreshProfile = useCallback(
     async (userId: string) => {
+      const requestVersion = sessionVersion.current;
       const nextProfile = await loadProfile(userId);
-      setProfile(nextProfile);
+      if (requestVersion === sessionVersion.current) setProfile(nextProfile);
       return nextProfile;
     },
     [],
@@ -111,12 +114,13 @@ export function AuthProvider({
   useEffect(() => {
     let active = true;
 
+    const restoreVersion = sessionVersion.current;
     async function restoreSession() {
       try {
         const currentUser =
           await authService.getCurrentSession();
 
-        if (!active) return;
+        if (!active || restoreVersion !== sessionVersion.current) return;
 
         if (currentUser) {
           /*
@@ -127,7 +131,7 @@ export function AuthProvider({
            * intermediate (user ≠ null, profile = null) state.
            */
           const nextProfile = await loadProfile(currentUser.id);
-          if (!active) return;
+          if (!active || restoreVersion !== sessionVersion.current) return;
           setUser(currentUser);
           setProfile(nextProfile);
         } else {
@@ -152,6 +156,7 @@ export function AuthProvider({
       data: { subscription },
     } = authService.onAuthStateChange((nextUser) => {
       if (!active) return;
+      const requestVersion = ++sessionVersion.current;
 
       if (!nextUser) {
         setUser(null);
@@ -170,7 +175,7 @@ export function AuthProvider({
        * /employee before the profile finished loading.
        */
       void loadProfile(nextUser.id).then((nextProfile) => {
-        if (!active) return;
+        if (!active || requestVersion !== sessionVersion.current) return;
         setUser(nextUser);
         setProfile(nextProfile);
         setLoading(false);
@@ -181,7 +186,7 @@ export function AuthProvider({
       active = false;
       subscription.unsubscribe();
     };
-  }, [refreshProfile]);
+  }, []);
 
   const signIn = useCallback(
     async (email: string, password: string) => {
@@ -190,12 +195,23 @@ export function AuthProvider({
           email,
           password,
         );
+        const requestVersion = sessionVersion.current;
 
         /*
          * Load the profile before setting state so React 18
          * can batch setUser + setProfile into one render.
          */
         const nextProfile = await loadProfile(nextUser.id);
+
+        if (requestVersion !== sessionVersion.current) {
+          return { error: "Your session changed. Please try signing in again.", profile: null };
+        }
+
+        if (!nextProfile || nextProfile.isActive !== true) {
+          setUser(null);
+          setProfile(null);
+          return { error: "Your account profile is missing or inactive. Contact your administrator.", profile: null };
+        }
 
         setUser(nextUser);
         setProfile(nextProfile);
@@ -229,7 +245,9 @@ export function AuthProvider({
           email,
           password,
         );
+        const requestVersion = sessionVersion.current;
 
+        if (requestVersion !== sessionVersion.current) return { error: "Your session changed. Please try again." };
         setUser(nextUser);
 
         /*
@@ -250,7 +268,9 @@ export function AuthProvider({
           );
         }
 
-        setProfile(nextProfile);
+        if (requestVersion === sessionVersion.current) setProfile(nextProfile);
+
+        if (!nextProfile || nextProfile.isActive !== true) return { error: "Your account profile is missing or inactive. Contact your administrator." };
 
         return {
           error: null,
@@ -268,10 +288,10 @@ export function AuthProvider({
   );
 
   const signOut = useCallback(async () => {
-    await authService.signOut();
-
+    ++sessionVersion.current;
     setUser(null);
     setProfile(null);
+    await authService.signOut();
   }, []);
 
   const resetPassword = useCallback(

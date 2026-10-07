@@ -690,6 +690,19 @@
   flex-direction: column;
 }
 
+.vibe-modal-panel { max-height: calc(100vh - 40px); overflow-y: auto; }
+.signal-item-button, .employee-pulse-card { width: 100%; text-align: left; font: inherit; cursor: pointer; }
+.signal-item-button:focus-visible, .employee-pulse-card:focus-visible { outline: 3px solid #a5b4fc; outline-offset: 2px; }
+.employee-pulse-card { border: 1px solid #e8eaf1; border-radius: 10px; padding: 14px; transition: transform .2s ease, box-shadow .2s ease, background .2s ease; }
+.employee-pulse-card:hover { transform: translateY(-1px); box-shadow: 0 5px 14px rgba(40,51,91,.08); background: #fafaff; }
+.employee-pulse-card.low-sentiment { background: #fff7f7; border-color: #fee2e2; }
+.employee-pulse-card.low-sentiment b, .vibe-modal-meta-val.low-score { color: #b42318; }
+.checkin-answer-list { display: flex; flex-direction: column; gap: 12px; }
+.checkin-answer-list > div { display: flex; flex-direction: column; gap: 5px; padding-bottom: 12px; border-bottom: 1px solid #eef2f6; }
+.checkin-answer-list strong, .vibe-modal-msg-container > strong { color: #334155; font-size: 13px; }
+.checkin-answer-list span { color: #0f172a; font-size: 14px; }
+@media (max-width: 540px) { .vibe-modal-overlay { padding: 10px; } .vibe-modal-body, .vibe-modal-header { padding: 16px; } }
+
 .vibe-modal-header {
   padding: 18px 24px;
   border-bottom: 1px solid #eef2f6;
@@ -793,5 +806,28 @@
   justify-content: flex-end;
   background: #f8fafc;
 }
+
+.employee-combo { position: relative; max-width: 640px; }
+.employee-filter-grid { display: grid; grid-template-columns: minmax(260px, 1.1fr) minmax(240px, .9fr); gap: 18px; align-items: start; }
+.employee-search-wrap { position: relative; display: flex; align-items: center; }
+.employee-search-wrap > svg { position: absolute; left: 12px; color: #64748b; pointer-events: none; }
+.employee-search-wrap input { min-width: 0; width: 100%; padding-left: 38px; padding-right: 38px; }
+.employee-search-wrap > button { position: absolute; right: 8px; display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: #64748b; font-size: 20px; cursor: pointer; }
+.employee-combo-options { position: absolute; z-index: 20; top: 100%; left: 0; right: 0; max-height: 260px; overflow: auto; background: #fff; border: 1px solid #dbe2ea; border-radius: 10px; box-shadow: 0 12px 28px rgba(15,23,42,.14); }
+.employee-combo-options button { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 10px 12px; text-align: left; border: 0; background: #fff; cursor: pointer; color: #172033; }
+.employee-combo-options button:hover, .employee-combo-options button:focus-visible { background: #f4f6fb; }
+.employee-combo-options span { color: #64748b; font-size: 12px; }
+.employee-no-results { margin: 0; padding: 12px; color: #64748b; font-size: 13px; }
+.employee-filter-help { color: #64748b; font-size: 12px; line-height: 1.45; }
+.employee-days-control { display: flex; align-items: center; gap: 9px; color: #52647d; font-size: 14px; }
+.employee-days-control input { width: 110px; }
+.signal-request-row { align-items: center; }
+.signal-item-open { display: flex; flex: 1; min-width: 0; align-items: flex-start; gap: 16px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.signal-item-open:focus-visible { outline: 3px solid #a5b4fc; outline-offset: 3px; border-radius: 8px; }
+.leadership-noted-button { flex: 0 0 auto; align-self: center; }
+.leadership-message-byline { margin: 0; color: #334155; font-size: 14px; }
+.employee-note-success { margin: 0; color: #166534; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+.emp-filter-error { color: #b42318; font-size: 13px; margin: 8px 0 0; }
+@media (max-width: 640px) { .employee-filter-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; } .employee-combo-options { max-height: 220px; } .employee-days-control { flex-wrap: wrap; } .emp-filter-actions .emp-apply-btn { width: 100%; } }
 
 

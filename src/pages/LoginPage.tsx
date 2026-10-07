@@ -38,11 +38,12 @@ export function LoginPage() {
   const { signIn } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const accessDenied = Boolean((location.state as { accessDenied?: boolean } | null)?.accessDenied);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [visible, setVisible] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(accessDenied ? "Your account profile is missing or inactive. Contact your administrator." : "");
   const [busy, setBusy] = useState(false);
 
   async function submit(event: FormEvent) {

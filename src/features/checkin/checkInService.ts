@@ -1,6 +1,5 @@
 import { supabase } from "../../lib/supabase";
-import { calculateSentiment } from "../admin/utils/sentimentEngine";
-import type { Signal, TrendDataPoint } from "../admin/adminTypes";
+import type { TrendDataPoint } from "../admin/adminTypes";
 
 export type CheckInRecord = {
   id: string;
@@ -91,6 +90,12 @@ export async function getTodayCheckIn(
   return getCheckInForDate(userId, getBusinessDate());
 }
 
+export async function getRecentCheckInsForUser(userId: string, fromDate: string, toDate: string): Promise<CheckInRecord[]> {
+  const { data, error } = await supabase.from("check_ins").select("id,user_id,checkin_date,created_at,mood,energy,workload,requested_support,sentiment_score,answers").eq("user_id", userId).gte("checkin_date", fromDate).lte("checkin_date", toDate).order("checkin_date", { ascending: true });
+  if (error) throw new Error("Unable to load check-in history.");
+  return (data ?? []).map((record) => ({ id: record.id, date: record.checkin_date, submittedAt: record.created_at, userId: record.user_id, userName: "", mood: record.mood, energy: record.energy, workload: record.workload, requestedSupport: record.requested_support, sentimentScore: record.sentiment_score, answers: record.answers }));
+}
+
 /**
  * Fetch all check-ins visible to the current Supabase user.
  *
@@ -98,10 +103,12 @@ export async function getTodayCheckIn(
  * - Employees → their own check-ins
  * - Admins → organization check-ins
  */
-export async function getCheckIns(): Promise<CheckInRecord[]> {
-  const { data, error } = await supabase
-    .from("check_ins")
-    .select(`
+export async function getCheckIns(fromDate?: string, toDate?: string): Promise<CheckInRecord[]> {
+  const data: Array<{ id: string; user_id: string; checkin_date: string; created_at: string; mood: number; energy: number; workload: number; requested_support: boolean; sentiment_score: number; answers: Record<string, unknown> | null }> = [];
+  for (let offset = 0; ; offset += 1000) {
+    let query = supabase
+      .from("check_ins")
+      .select(`
       id,
       user_id,
       checkin_date,
@@ -112,12 +119,19 @@ export async function getCheckIns(): Promise<CheckInRecord[]> {
       requested_support,
       sentiment_score,
       answers
-    `)
-    .order("checkin_date", { ascending: true });
+      `)
+      .order("checkin_date", { ascending: true });
+    if (fromDate) query = query.gte("checkin_date", fromDate);
+    if (toDate) query = query.lte("checkin_date", toDate);
+    const { data: batchData, error } = await query.range(offset, offset + 999);
 
-  if (error) {
-    console.error("Failed to fetch check-ins:", error);
-    throw new Error("Unable to load check-ins.");
+    if (error) {
+      console.error("Failed to fetch check-ins:", error);
+      throw new Error("Unable to load check-ins.");
+    }
+    const batch = batchData ?? [];
+    data.push(...batch);
+    if (batch.length < 1000) break;
   }
 
   if (!data || data.length === 0) {
@@ -130,13 +144,11 @@ export async function getCheckIns(): Promise<CheckInRecord[]> {
    */
   const userIds = [...new Set(data.map((record) => record.user_id))];
 
-  const { data: profiles, error: profilesError } = await supabase
-    .from("profiles")
-    .select("id, full_name, first_name, last_name")
-    .in("id", userIds);
-
-  if (profilesError) {
-    console.error("Failed to fetch profile names:", profilesError);
+  const profiles: Array<{ id: string; full_name: string | null; first_name: string | null; last_name: string | null }> = [];
+  for (let offset = 0; offset < userIds.length; offset += 500) {
+    const { data: batch, error: profilesError } = await supabase.from("profiles").select("id,full_name,first_name,last_name").in("id", userIds.slice(offset, offset + 500));
+    if (profilesError) { console.error("Failed to fetch profile names:", profilesError); throw new Error("Unable to load profile names for check-ins."); }
+    profiles.push(...(batch ?? []));
   }
 
   const profileMap = new Map<
@@ -148,7 +160,7 @@ export async function getCheckIns(): Promise<CheckInRecord[]> {
     }
   >();
 
-  for (const profile of profiles ?? []) {
+  for (const profile of profiles) {
     profileMap.set(profile.id, profile);
   }
 
@@ -217,7 +229,7 @@ export async function saveCheckIn(
 
   const { data, error } = await supabase
     .from("check_ins")
-    .upsert(
+    .insert(
       {
         user_id: user.id,
         checkin_date: today,
@@ -226,9 +238,6 @@ export async function saveCheckIn(
         workload: input.workload,
         requested_support: input.requestedSupport,
         answers: answersPayload,
-      },
-      {
-        onConflict: "user_id,checkin_date",
       },
     )
     .select(`
@@ -247,6 +256,9 @@ export async function saveCheckIn(
 
   if (error) {
     console.error("Failed to save check-in:", error);
+    if (error.code === "23505") {
+      throw new Error("Today's check-in has already been submitted.");
+    }
     throw new Error(
       error.message || "Unable to save your check-in.",
     );
@@ -341,197 +353,11 @@ export function buildTrendData(
         (record) => ((record.workload - 1) / 4) * 100,
       ),
 
-      responseRate: 0,
+      responseRate: null,
     });
   }
 
   return data.filter((point) =>
     records.some((record) => record.date === point.date),
-  );
-}
-
-/**
- * Get the previous working dates.
- *
- * VIBE currently uses Monday-Saturday as working days.
- * Sunday is excluded.
- */
-function getPreviousWorkingDates(
-  dateString: string,
-  count: number,
-): string[] {
-  const result: string[] = [];
-  const date = new Date(`${dateString}T12:00:00`);
-
-  while (result.length < count) {
-    date.setDate(date.getDate() - 1);
-
-    const day = date.getDay();
-
-    // Sunday = 0
-    // Monday-Saturday = working days
-    if (day !== 0) {
-      result.push(
-        [
-          date.getFullYear(),
-          String(date.getMonth() + 1).padStart(2, "0"),
-          String(date.getDate()).padStart(2, "0"),
-        ].join("-"),
-      );
-    }
-  }
-
-  return result;
-}
-
-/**
- * Checks whether an employee has low sentiment on
- * four consecutive working days.
- *
- * Low sentiment threshold = 60.
- */
-function hasFourConsecutiveLowDays(
-  userRecords: CheckInRecord[],
-): boolean {
-  if (userRecords.length < 4) {
-    return false;
-  }
-
-  const recordsByDate = new Map(
-    userRecords.map((record) => [
-      record.date,
-      record,
-    ]),
-  );
-
-  const latestDate =
-    userRecords[userRecords.length - 1].date;
-
-  const requiredDates = [
-    latestDate,
-    ...getPreviousWorkingDates(latestDate, 3),
-  ];
-
-  for (const date of requiredDates) {
-    const record = recordsByDate.get(date);
-
-    if (!record) {
-      return false;
-    }
-
-    if (record.sentimentScore >= 60) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-/**
- * Builds admin signals from check-in data.
- *
- * Current signals:
- * - Leadership follow-up request
- * - High work pressure
- * - Four consecutive working days of low sentiment
- */
-export function buildSignals(
-  records: CheckInRecord[],
-): Signal[] {
-  const recordsByUser = new Map<
-    string,
-    CheckInRecord[]
-  >();
-
-  for (const record of records) {
-    const existing =
-      recordsByUser.get(record.userId) ?? [];
-
-    existing.push(record);
-
-    recordsByUser.set(record.userId, existing);
-  }
-
-  const signals: Signal[] = [];
-
-  for (const userRecords of recordsByUser.values()) {
-    userRecords.sort((a, b) =>
-      a.date.localeCompare(b.date),
-    );
-
-    const latest =
-      userRecords[userRecords.length - 1];
-
-    if (!latest) continue;
-
-    const target = {
-      targetId: latest.userId,
-      targetName: latest.userName || "Employee",
-    };
-
-    /*
-     * Leadership support request.
-     */
-    if (latest.requestedSupport) {
-      signals.push({
-        id: `support-${latest.id}`,
-        type: "leadership_followup",
-        severity: "high",
-        dateDetected: latest.submittedAt,
-        affectedScope: "employee",
-        ...target,
-        evidence:
-          "This employee asked for a leadership follow-up.",
-        status: "new",
-        recommendedAction:
-          "Reach out privately and offer support.",
-      });
-    }
-
-    /*
-     * High work pressure.
-     */
-    if (latest.workload >= 4) {
-      signals.push({
-        id: `pressure-${latest.id}`,
-        type: "high_workload",
-        severity:
-          latest.workload === 5 ? "high" : "medium",
-        dateDetected: latest.submittedAt,
-        affectedScope: "employee",
-        ...target,
-        evidence:
-          latest.workload === 5
-            ? "Work pressure was rated Overwhelming."
-            : "Work pressure was rated Intense.",
-        status: "new",
-        recommendedAction:
-          "Check in about current workload and priorities.",
-      });
-    }
-
-    /*
-     * Core VIBE requirement:
-     * four consecutive working days with sentiment below 60.
-     */
-    if (hasFourConsecutiveLowDays(userRecords)) {
-      signals.push({
-        id: `sustained-${latest.userId}-${latest.date}`,
-        type: "low_sentiment",
-        severity: "high",
-        dateDetected: latest.submittedAt,
-        affectedScope: "employee",
-        ...target,
-        evidence:
-          "Sentiment remained below 60 for four consecutive working days.",
-        status: "new",
-        recommendedAction:
-          "Arrange a confidential check-in and understand what support would help.",
-      });
-    }
-  }
-
-  return signals.sort((a, b) =>
-    b.dateDetected.localeCompare(a.dateDetected),
   );
 }

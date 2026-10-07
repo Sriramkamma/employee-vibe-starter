@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   ArrowRight,
   Check,
@@ -16,6 +16,7 @@ import {
   useEmotionalTheme,
   type EmotionalThemeType,
 } from "../hooks/useEmotionalTheme";
+import { getBusinessDate } from "../utils/dateUtils";
 
 const moods = [
   { icon: "😞", label: "Very low", value: 1 },
@@ -58,17 +59,16 @@ export function CheckInPage() {
 
   const [screen, setScreen] = useState<"checkin" | "done">("checkin");
   const [checkingExisting, setCheckingExisting] = useState(true);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [verifiedDate, setVerifiedDate] = useState(getBusinessDate());
   const [step, setStep] = useState(0);
   const [direction, setDirection] = useState<"forward" | "back">("forward");
   const [timeLeft, setTimeLeft] = useState(30);
+  const questionTimes = useRef<Record<number, number>>({});
 
   const [answers, setAnswers] = useState<
     Record<number, string | number>
-  >({
-    0: 3,
-    1: 3,
-    2: 3,
-  });
+  >({});
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -89,11 +89,13 @@ export function CheckInPage() {
       try {
         const existing = await getTodayCheckIn(user.id);
         if (!active) return;
+        setVerificationError(null);
         if (existing) {
           setScreen("done");
         }
       } catch (err) {
         console.error("Failed to check existing check-in:", err);
+        if (active) setVerificationError("Today's check-in status could not be verified. Retry before starting.");
       } finally {
         if (active) {
           setCheckingExisting(false);
@@ -107,6 +109,41 @@ export function CheckInPage() {
       active = false;
     };
   }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const timer = window.setInterval(() => {
+      const today = getBusinessDate();
+      if (today === verifiedDate) return;
+      setVerifiedDate(today);
+      setCheckingExisting(true);
+      void getTodayCheckIn(user.id).then((existing) => {
+        if (existing) setScreen("done");
+        else {
+          setScreen("checkin");
+          setStep(0);
+          setAnswers({});
+          setLeadershipMessage("");
+          questionTimes.current = {};
+          setTimeLeft(30);
+        }
+        setVerificationError(null);
+      }).catch(() => {
+        setVerificationError("Today's check-in status could not be verified. Retry before submitting.");
+      }).finally(() => setCheckingExisting(false));
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [user, verifiedDate]);
+
+  const retryVerification = () => {
+    setVerificationError(null);
+    setCheckingExisting(true);
+    void getTodayCheckIn(user!.id).then((existing) => {
+      if (existing) setScreen("done");
+    }).catch(() => {
+      setVerificationError("Today's check-in status could not be verified. Check your connection and retry.");
+    }).finally(() => setCheckingExisting(false));
+  };
 
   const questions = [
     {
@@ -175,6 +212,7 @@ export function CheckInPage() {
       return;
     }
 
+    if (!isFinal && currentVal === undefined) return;
     if (isFinal && !currentVal) {
       return;
     }
@@ -197,8 +235,9 @@ export function CheckInPage() {
 
     // Questions 1 → 3
     if (step < 3) {
+      questionTimes.current[step] = timeLeft;
       setStep(step + 1);
-      setTimeLeft(30);
+      setTimeLeft(questionTimes.current[step + 1] ?? 30);
       return;
     }
 
@@ -267,7 +306,7 @@ export function CheckInPage() {
 
     setDirection("back");
     setStep(step - 1);
-    setTimeLeft(30);
+    setTimeLeft(questionTimes.current[step - 1] ?? 30);
   };
 
   const resetToHome = () => {
@@ -278,12 +317,17 @@ export function CheckInPage() {
     if (screen === "done" || checkingExisting || saving || isFinal) return;
 
     if (timeLeft <= 0) {
+      if (currentVal === undefined) return;
       void next();
       return;
     }
 
     const timer = setInterval(
-      () => setTimeLeft((previous) => previous - 1),
+      () => setTimeLeft((previous) => {
+        const nextTime = Math.max(0, previous - 1);
+        questionTimes.current[step] = nextTime;
+        return nextTime;
+      }),
       1000,
     );
 
@@ -292,7 +336,7 @@ export function CheckInPage() {
     // next is intentionally excluded because this timer should
     // only react to the countdown and screen state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeLeft, screen, checkingExisting, saving, isFinal]);
+  }, [timeLeft, screen, checkingExisting, saving, isFinal, step, currentVal]);
 
   // ── Checking status loading screen ────────────────────────────────────────
   if (checkingExisting) {
@@ -319,6 +363,10 @@ export function CheckInPage() {
         </section>
       </main>
     );
+  }
+
+  if (verificationError) {
+    return <main className="app-shell checkin-shell" style={atmosphereStyle}><section className="welcome-card reveal-up" role="alert"><p>{verificationError}</p><button className="primary-button" type="button" onClick={retryVerification}>Retry</button></section></main>;
   }
 
   // ── Done screen ───────────────────────────────────────────────────────────
@@ -515,7 +563,7 @@ export function CheckInPage() {
 
           <p className="question-helper">
             {isFinal
-              ? "Pick the one thing that most influenced how you felt."
+              ? "Let us know whether you would like support from the leadership team."
               : current.helper}
           </p>
 
@@ -619,10 +667,7 @@ export function CheckInPage() {
           <button
             className="primary-button continue vibe-cta"
             type="button"
-            disabled={
-              isFinal &&
-              (!currentVal || saving)
-            }
+            disabled={saving || (isFinal ? !currentVal : currentVal === undefined)}
             onClick={() => void next()}
             style={{
               background:

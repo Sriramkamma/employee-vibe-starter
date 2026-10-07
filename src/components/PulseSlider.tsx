@@ -117,7 +117,7 @@ export function PulseSlider({
         />
 
         {/* Tick mark buttons (also act as click targets) */}
-        <div className="slider-ticks" aria-hidden="true">
+        <div className="slider-ticks">
           {options.map((option) => {
             const isActive = Math.round(value) === option.value;
             return (
@@ -125,6 +125,8 @@ export function PulseSlider({
                 key={option.value}
                 type="button"
                 className={`slider-tick${isActive ? " active" : ""}`}
+                aria-label={`Select ${option.label}`}
+                aria-pressed={isActive}
                 onClick={() => onChange(option.value)}
                 style={
                   isActive

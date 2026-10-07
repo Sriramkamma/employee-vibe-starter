@@ -3,7 +3,7 @@ import { useAuth } from "./AuthContext";
 import { SessionLoading } from "../../components/SessionLoading";
 
 export function ProtectedRoute() {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, profile, loading } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -19,6 +19,8 @@ export function ProtectedRoute() {
       />
     );
   }
+
+  if (!profile || profile.isActive !== true) return <Navigate to="/login" replace state={{ accessDenied: true }} />;
 
   return <Outlet />;
 }
@@ -41,9 +43,7 @@ export function GuestRoute() {
    * before the DB fetch completes, sending admins to the
    * wrong route.
    */
-  if (!profile) {
-    return <SessionLoading />;
-  }
+  if (!profile || profile.isActive !== true) return <Outlet />;
 
   if (profile.role === "admin") {
     return <Navigate to="/admin" replace />;
@@ -67,15 +67,13 @@ export function AdminRoute() {
    * Profile is still being fetched — wait rather than
    * bouncing the admin to /employee prematurely.
    */
-  if (!profile) {
-    return <SessionLoading />;
-  }
+  if (!profile || profile.isActive !== true) return <Navigate to="/login" replace state={{ accessDenied: true }} />;
 
   /*
    * Admin access is determined ONLY by the
    * database-backed Supabase profile role.
    */
-  if (profile.role !== "admin") {
+  if (profile.role !== "admin" || !profile.organizationId) {
     return <Navigate to="/employee" replace />;
   }
 
