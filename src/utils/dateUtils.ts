@@ -75,6 +75,17 @@ export function getBusinessDateDaysAgo(days: number): string {
   return shiftBusinessDate(getBusinessDate(), -days);
 }
 
+/** Returns the current Monday-to-today range in the business timezone. */
+export function getCurrentBusinessWeekRange(
+  today: string = getBusinessDate(),
+): { start: string; end: string } {
+  const [year, month, day] = today.split("-").map(Number);
+  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  // Monday is day zero; Sunday belongs to the same week (six days after Monday).
+  const daysSinceMonday = (weekday + 6) % 7;
+  return { start: shiftBusinessDate(today, -daysSinceMonday), end: today };
+}
+
 /**
  * Formats a calendar date (YYYY-MM-DD) or ISO string for table / UI display
  * as "DD MMM YYYY" (e.g. "06 Oct 2026").
