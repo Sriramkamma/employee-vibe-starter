@@ -10,8 +10,9 @@ type TrendChartProps = {
 };
 
 export function TrendChart({ data, metric, height = 240, color = "var(--primary)" }: TrendChartProps) {
+  const chartData = data.filter((point) => Number.isFinite(point[metric]));
   const points = useMemo(() => {
-    if (!data.length) return "";
+    if (!chartData.length) return "";
     
     // Reverse data to show oldest to newest (left to right) if needed. 
     // Assuming data is passed oldest to newest already for the chart.
@@ -19,18 +20,18 @@ export function TrendChart({ data, metric, height = 240, color = "var(--primary)
     const minVal = 0;
     const maxVal = 100;
     
-    const dx = width / (data.length - 1 || 1);
+    const dx = width / (chartData.length - 1 || 1);
     const dy = height / (maxVal - minVal);
 
-    return data.map((point, i) => {
+    return chartData.map((point, i) => {
       const x = i * dx;
       // SVG Y is top-down, so invert it
       const y = height - (Number(point[metric]) - minVal) * dy;
       return `${x},${y}`;
     }).join(" L ");
-  }, [data, metric, height]);
+  }, [chartData, metric, height]);
 
-  if (!data || data.length === 0) {
+  if (!chartData.length) {
     return (
       <div className="admin-empty-state" style={{ height }}>
         <p>Not enough historical data.</p>
@@ -38,8 +39,8 @@ export function TrendChart({ data, metric, height = 240, color = "var(--primary)
     );
   }
 
-  const chartPoints = data.map((point, index) => ({
-    x: index * (800 / (data.length - 1 || 1)),
+  const chartPoints = chartData.map((point, index) => ({
+    x: index * (800 / (chartData.length - 1 || 1)),
     y: height - Number(point[metric]) * (height / 100),
     date: point.date,
     value: Number(point[metric]),
@@ -91,10 +92,10 @@ export function TrendChart({ data, metric, height = 240, color = "var(--primary)
       
       {/* Quick axes labels (optional, simplified) */}
       <div className="trend-axis-label" style={{ position: "absolute", bottom: "-24px", left: 0, fontSize: 12, color: "var(--text-muted)" }}>
-        {formatChartDate(data[0]?.date ?? "")}
+        {formatChartDate(chartData[0]?.date ?? "")}
       </div>
       <div className="trend-axis-label" style={{ position: "absolute", bottom: "-24px", right: 0, fontSize: 12, color: "var(--text-muted)" }}>
-        {formatChartDate(data[data.length - 1]?.date ?? "")}
+        {formatChartDate(chartData[chartData.length - 1]?.date ?? "")}
       </div>
     </div>
   );

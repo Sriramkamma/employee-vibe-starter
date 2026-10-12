@@ -2,10 +2,12 @@ import { useMemo, useState } from "react";
 import { TrendChart } from "../../components/admin/TrendChart";
 import { useCheckIns } from "../../features/checkin/useCheckIns";
 import { buildTrendData } from "../../features/checkin/checkInService";
+import { useAuth } from "../../features/auth/AuthContext";
 
 export function AdminPulseAnalyticsPage() {
   const [days, setDays] = useState(30);
-  const records = useCheckIns(days);
+  const { profile } = useAuth();
+  const { records, loading, error, retry } = useCheckIns(days, profile?.organizationId ?? undefined);
   const chartData = useMemo(() => buildTrendData(records, days), [records, days]);
 
   return (
@@ -24,6 +26,7 @@ export function AdminPulseAnalyticsPage() {
       </header>
 
       <div className="admin-content">
+        {loading ? <div className="admin-panel" role="status" style={{ padding: 24 }}>Loading pulse analytics…</div> : error ? <div className="admin-panel admin-empty-state" role="alert"><p>Pulse analytics could not be loaded.</p><p>{error}</p><button type="button" className="primary-button" onClick={() => void retry()}>Try again</button></div> : records.length === 0 ? <div className="admin-panel admin-empty-state"><p>Not enough historical data.</p><span>No employee check-ins were found for this period.</span></div> : <>
         <section className="admin-section">
           <div className="admin-section-header">
             <h2 className="admin-section-title">Sentiment Trend</h2>
@@ -53,12 +56,13 @@ export function AdminPulseAnalyticsPage() {
 
         <section className="admin-section">
           <div className="admin-section-header">
-            <h2 className="admin-section-title">Workload Trend</h2>
+            <h2 className="admin-section-title">Workload Wellness Trend</h2>
           </div>
           <div className="admin-panel" style={{ paddingBottom: 48 }}>
             <TrendChart data={chartData} metric="workload" color="var(--low)" />
           </div>
         </section>
+        </>}
       </div>
     </>
   );

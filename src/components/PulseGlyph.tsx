@@ -40,11 +40,11 @@ function sampleStops(stops: [number, number, number][], t: number) {
 // Good:           warm teal
 // Excellent:      soft violet-lavender
 const moodStops: [number, number, number][] = [
-  [148,  88, 175],   // Very Difficult — muted violet-rose
-  [168, 110, 130],   // Difficult      — dusty rose
-  [120, 138, 210],   // Okay           — periwinkle
-  [ 52, 188, 162],   // Good           — teal
-  [155, 118, 248],   // Excellent      — soft electric violet
+  [ 79, 113, 190],   // Very low — deep periwinkle
+  [ 87, 143, 197],   // Low — calm blue
+  [112, 157, 194],   // Neutral — slate blue
+  [ 76, 178, 175],   // Good — teal
+  [125, 139, 224],   // Very good — violet
 ];
 
 // ─── Energy colour stops ──────────────────────────────────────────────────────
@@ -93,11 +93,11 @@ function Face({
   const glowId  = useId();
 
   // Expression interpolations
-  const smile   = invertSmile ? lerp(16, -20, t) : lerp(-20, 18, t);
-  const eyeH    = invertSmile ? lerp(9, 5,   t) : lerp(5,  9.5, t);
-  const eyeY    = invertSmile ? lerp(42, 40,  t) : lerp(40,  43, t);
-  const brow    = invertSmile ? lerp(-6, 9,   t) : lerp(9,  -6,  t);
-  const cheekA  = invertSmile ? lerp(0.06, 0.20, t) : lerp(0.06, 0.26, t);
+  const smile   = invertSmile ? lerp(10, -12, t) : lerp(-12, 14, t);
+  const eyeH    = invertSmile ? lerp(7, 5, t) : lerp(6, 7, t);
+  const eyeY    = invertSmile ? lerp(42, 40, t) : lerp(40, 41, t);
+  const brow    = invertSmile ? lerp(-3, 5, t) : lerp(4, -3, t);
+  const cheekA  = invertSmile ? lerp(0.04, 0.12, t) : lerp(0.04, 0.14, t);
 
   // Cheek colour interpolated separately for emotional resonance
   const cheekCol = sampleStops(cheekStops, t);
@@ -130,26 +130,26 @@ function Face({
       <path
         d={`M 27 ${38 + brow} Q 37 ${31.5 + brow * 0.22} 43.5 38`}
         fill="none"
-        stroke="rgba(15,23,42,0.52)"
-        strokeWidth="3.0"
+        stroke="rgba(15,23,42,0.48)"
+        strokeWidth="2.4"
         strokeLinecap="round"
       />
       {/* Brow — right */}
       <path
         d={`M 56.5 38 Q 63 ${31.5 + brow * 0.22} 73 ${38 + brow}`}
         fill="none"
-        stroke="rgba(15,23,42,0.52)"
-        strokeWidth="3.0"
+        stroke="rgba(15,23,42,0.48)"
+        strokeWidth="2.4"
         strokeLinecap="round"
       />
 
       {/* Eyes — left */}
-      <ellipse cx="36" cy={eyeY}            rx="5.2" ry={eyeH / 2} fill="#0F172A" />
+      <ellipse cx="36" cy={eyeY}            rx="4.2" ry={eyeH / 2} fill="#0F172A" />
       {/* Eye highlight — left */}
       <ellipse cx="34.2" cy={eyeY - 1.2 + pupilDY} rx="1.5" ry="1.3" fill="#fff" />
 
       {/* Eyes — right */}
-      <ellipse cx="64" cy={eyeY}            rx="5.2" ry={eyeH / 2} fill="#0F172A" />
+      <ellipse cx="64" cy={eyeY}            rx="4.2" ry={eyeH / 2} fill="#0F172A" />
       {/* Eye highlight — right */}
       <ellipse cx="62.2" cy={eyeY - 1.2 + pupilDY} rx="1.5" ry="1.3" fill="#fff" />
 
@@ -164,7 +164,7 @@ function Face({
         d={`M 32 68 Q 50 ${68 + smile} 68 68`}
         fill="none"
         stroke="#0F172A"
-        strokeWidth="3.8"
+        strokeWidth="3.2"
         strokeLinecap="round"
       />
     </svg>
@@ -280,7 +280,6 @@ export function PulseGlyph({ value, kind, size = 92 }: PulseGlyphProps) {
 }
 
 export function glyphKindForStep(step: number): GlyphKind {
-  if (step === 1) return "energy";
-  if (step === 2) return "workload";
+  if (step === 1) return "workload";
   return "mood";
 }

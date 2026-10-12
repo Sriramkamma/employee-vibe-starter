@@ -26,14 +26,6 @@ const moods = [
   { icon: "😄", label: "Happy", value: 5 },
 ];
 
-const energy = [
-  { icon: "💤", label: "Exhausted", value: 1 },
-  { icon: "🪫", label: "Tired", value: 2 },
-  { icon: "😐", label: "Steady", value: 3 },
-  { icon: "🔋", label: "Fresh", value: 4 },
-  { icon: "⚡", label: "Energised", value: 5 },
-];
-
 const workload = [
   { icon: "😌", label: "Light", value: 1 },
   { icon: "🙂", label: "Manageable", value: 2 },
@@ -49,7 +41,6 @@ const influences = [
 
 const THEME_TYPES: EmotionalThemeType[] = [
   "mood",
-  "energy",
   "workload",
 ];
 
@@ -65,10 +56,11 @@ export function CheckInPage() {
   const [direction, setDirection] = useState<"forward" | "back">("forward");
   const [timeLeft, setTimeLeft] = useState(30);
   const questionTimes = useRef<Record<number, number>>({});
+  const timedOutQuestions = useRef<Set<number>>(new Set());
 
   const [answers, setAnswers] = useState<
     Record<number, string | number>
-  >({});
+  >({ 0: 3, 1: 3 });
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -122,9 +114,10 @@ export function CheckInPage() {
         else {
           setScreen("checkin");
           setStep(0);
-          setAnswers({});
+          setAnswers({ 0: 3, 1: 3 });
           setLeadershipMessage("");
           questionTimes.current = {};
+          timedOutQuestions.current.clear();
           setTimeLeft(30);
         }
         setVerificationError(null);
@@ -153,12 +146,6 @@ export function CheckInPage() {
       options: moods,
     },
     {
-      eyebrow: "Energy",
-      title: "How is your energy at the end of today?",
-      helper: "Be honest. There's no wrong answer.",
-      options: energy,
-    },
-    {
       eyebrow: "Workload",
       title: "How did your work pressure feel today?",
       helper: "Tell us how manageable the day actually was.",
@@ -167,7 +154,7 @@ export function CheckInPage() {
   ];
 
   const currentVal = answers[step];
-  const isFinal = step === 3;
+  const isFinal = step === questions.length;
 
   // ── Emotional theme for current step ──────────────────────────────────────
   const themeType = isFinal
@@ -234,7 +221,7 @@ export function CheckInPage() {
     setDirection("forward");
 
     // Questions 1 → 3
-    if (step < 3) {
+    if (step < questions.length) {
       questionTimes.current[step] = timeLeft;
       setStep(step + 1);
       setTimeLeft(questionTimes.current[step + 1] ?? 30);
@@ -245,13 +232,12 @@ export function CheckInPage() {
     if (
       user &&
       typeof answers[0] === "number" &&
-      typeof answers[1] === "number" &&
-      typeof answers[2] === "number"
+      typeof answers[1] === "number"
     ) {
       setSaving(true);
       setSaveError(null);
 
-      const isLeadershipRequested = String(answers[3]).includes("Yes, please");
+      const isLeadershipRequested = String(answers[2]).includes("Yes, please");
       const trimmedMessage = leadershipMessage.trim();
 
       try {
@@ -259,8 +245,7 @@ export function CheckInPage() {
           userId: user.id,
           userName: user.name,
           mood: Math.round(answers[0]),
-          energy: Math.round(answers[1]),
-          workload: Math.round(answers[2]),
+          workload: Math.round(answers[1]),
           requestedSupport: isLeadershipRequested,
           answers: {
             leadership_request: isLeadershipRequested ? "Yes, please" : "Not right now",
@@ -316,8 +301,11 @@ export function CheckInPage() {
   useEffect(() => {
     if (screen === "done" || checkingExisting || saving || isFinal) return;
 
+    if (timedOutQuestions.current.has(step)) return;
+
     if (timeLeft <= 0) {
       if (currentVal === undefined) return;
+      timedOutQuestions.current.add(step);
       void next();
       return;
     }
@@ -461,7 +449,7 @@ export function CheckInPage() {
         </div>
 
         <div className="progress-label">
-          {step + 1} / 4
+          {step + 1} / 3
         </div>
       </div>
 
@@ -474,7 +462,7 @@ export function CheckInPage() {
         <div
           className="progress-fill"
           style={{
-            width: `${((step + 1) / 4) * 100}%`,
+            width: `${((step + 1) / 3) * 100}%`,
             background:
               "linear-gradient(90deg, var(--vibe-primary), var(--vibe-secondary))",
             boxShadow:

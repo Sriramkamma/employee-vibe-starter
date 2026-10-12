@@ -173,7 +173,7 @@ export const authService = {
    * Sign out from Supabase.
    */
   async signOut(): Promise<void> {
-    const { error } = await supabase.auth.signOut();
+    const { error } = await supabase.auth.signOut({ scope: "local" });
 
     if (error) {
       throw new Error(getAuthErrorMessage(error));
@@ -229,16 +229,16 @@ export const authService = {
    * structure because AuthContext expects that structure.
    */
   onAuthStateChange(
-    callback: (user: AuthUser | null) => void,
+    callback: (event: string, user: AuthUser | null) => void,
   ) {
     return supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      (event, session) => {
         if (!session?.user) {
-          callback(null);
+          callback(event, null);
           return;
         }
 
-        callback(mapUser(session.user));
+        callback(event, mapUser(session.user));
       },
     );
   },

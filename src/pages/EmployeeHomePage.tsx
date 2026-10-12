@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../features/auth/AuthContext";
 import { PulseGlyph } from "../components/PulseGlyph";
 import { getTodayCheckIn, getRecentCheckInsForUser, type CheckInRecord } from "../features/checkin/checkInService";
-import { formatBusinessDateHeader, getBusinessDate, shiftBusinessDate } from "../utils/dateUtils";
+import { formatBusinessDateHeader, getBusinessDate, getCurrentBusinessWeekRange } from "../utils/dateUtils";
 
 export function EmployeeHomePage() {
   const { user, profile, signOut } = useAuth();
@@ -50,7 +50,8 @@ export function EmployeeHomePage() {
       }
       if (user) {
         try {
-          const records = await getRecentCheckInsForUser(user.id, shiftBusinessDate(today, -6), today);
+          const { start, end } = getCurrentBusinessWeekRange(today);
+          const records = await getRecentCheckInsForUser(user.id, start, end);
           if (active) setCheckIns(records);
         } catch (error) { console.error("Failed to load check-in history:", error); }
       }
@@ -64,6 +65,11 @@ export function EmployeeHomePage() {
     await signOut();
     navigate("/login", { replace: true });
   };
+
+  const weekRange = getCurrentBusinessWeekRange(businessDate);
+  const thisWeekCheckIns = checkIns
+    .filter((record) => record.date >= weekRange.start && record.date <= weekRange.end)
+    .sort((a, b) => a.date.localeCompare(b.date));
 
   return (
     <main className="app-shell">
@@ -132,9 +138,9 @@ export function EmployeeHomePage() {
               <div className="eyebrow">
                 <Sparkles size={14} aria-hidden="true" /> Today's check-in
               </div>
-              <p>Four questions. Up to 90 seconds for the first three. No performance review energy.</p>
+              <p>Three questions. Mood and work pressure are timed; leadership support is untimed.</p>
             </div>
-            <div className="time-chip">30 sec × 3</div>
+            <div className="time-chip">30 sec × 2</div>
             <button
               className="primary-button large"
               type="button"
@@ -150,9 +156,9 @@ export function EmployeeHomePage() {
             <div className="eyebrow">
               <CalendarDays size={14} aria-hidden="true" /> This week
             </div>
-            <span className="week-count">{checkIns.filter((record) => record.date >= shiftBusinessDate(businessDate, -6) && record.date <= businessDate).length} check-ins</span>
+            <span className="week-count">{thisWeekCheckIns.length} check-ins</span>
           </div>
-          {checkIns.length ? <div className="week-row">{checkIns.filter((record) => record.date >= shiftBusinessDate(businessDate, -6) && record.date <= businessDate).sort((a, b) => a.date.localeCompare(b.date)).map((record) => <div key={record.id} className="week-cell"><PulseGlyph value={record.mood} kind="mood" size={44} /><span>{new Intl.DateTimeFormat("en", { timeZone: "Asia/Kolkata", weekday: "short" }).format(new Date(`${record.date}T12:00:00+05:30`))}</span></div>)}</div> : <p>No check-ins in your history yet.</p>}
+          {thisWeekCheckIns.length ? <div className="week-row">{thisWeekCheckIns.map((record) => <div key={record.id} className="week-cell"><PulseGlyph value={record.mood} kind="mood" size={44} /><span>{new Intl.DateTimeFormat("en", { timeZone: "Asia/Kolkata", weekday: "short" }).format(new Date(`${record.date}T12:00:00+05:30`))}</span></div>)}</div> : <p>No check-ins this week yet.</p>}
         </div>
       </section>
     </main>

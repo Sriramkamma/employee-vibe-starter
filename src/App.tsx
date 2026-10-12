@@ -8,6 +8,7 @@ import { AdminOverviewPage } from "./pages/admin/AdminOverviewPage";
 import { AdminPulseAnalyticsPage } from "./pages/admin/AdminPulseAnalyticsPage";
 import { AdminSignalsPage } from "./pages/admin/AdminSignalsPage";
 import { AdminEmployeesPage } from "./pages/admin/AdminEmployeesPage";
+import { AdminReportsPage } from "./pages/admin/AdminReportsPage";
 import "./App.css";
 
 function App() {
@@ -17,8 +18,8 @@ function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/create-account" element={<CreateAccountPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-        <Route path="/reset-password" element={<ResetPasswordPage />} />
       </Route>
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
 
       <Route element={<ProtectedRoute />}>
         <Route path="/employee" element={<EmployeeHomePage />} />
@@ -36,7 +37,7 @@ function App() {
           <Route path="departments" element={<div className="admin-empty-state" style={{margin:'40px'}}><p>Departments - Coming Soon</p></div>} />
           <Route path="employees" element={<AdminEmployeesPage />} />
           <Route path="questions" element={<div className="admin-empty-state" style={{margin:'40px'}}><p>Questions Management - Coming Soon</p></div>} />
-          <Route path="reports" element={<div className="admin-empty-state" style={{margin:'40px'}}><p>Reports - Coming Soon</p></div>} />
+          <Route path="reports" element={<AdminReportsPage />} />
         </Route>
       </Route>
 

@@ -307,7 +307,7 @@ export function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const navigate = useNavigate();
+  const [sent, setSent] = useState(false);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -329,14 +329,15 @@ export function ForgotPasswordPage() {
       return;
     }
 
-    navigate("/reset-password", { state: { email } });
+    setSent(true);
   }
 
   return (
     <AuthShell
-      title="Reset your password"
-      subtitle="Enter the email linked to your VIBE account."
+      title={sent ? "Check your email" : "Reset your password"}
+      subtitle={sent ? "Password reset instructions have been sent to your email address." : "Enter the email linked to your VIBE account."}
     >
+      {sent ? <div className="auth-switch"><p>Open the link in your email to choose a new password.</p><Link to="/login">Back to Sign In</Link></div> : <>
       <form className="login-form" onSubmit={submit} noValidate>
         <label htmlFor="reset-email">Email</label>
 
@@ -366,12 +367,13 @@ export function ForgotPasswordPage() {
           Back to Sign In
         </Link>
       </div>
+      </>}
     </AuthShell>
   );
 }
 
 export function ResetPasswordPage() {
-  const { updatePassword } = useAuth();
+  const { updatePassword, isPasswordRecovery, loading } = useAuth();
   const navigate = useNavigate();
 
   const [password, setPassword] = useState("");
@@ -379,6 +381,7 @@ export function ResetPasswordPage() {
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
   const [visible, setVisible] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -394,7 +397,10 @@ export function ResetPasswordPage() {
       return;
     }
 
+    if (!isPasswordRecovery) return;
+    setBusy(true);
     const result = await updatePassword(password);
+    setBusy(false);
 
     if (result.error) {
       setError(result.error);
@@ -413,7 +419,7 @@ export function ResetPasswordPage() {
           : "Create a new password for your VIBE account."
       }
     >
-      {done ? (
+      {loading ? <p className="lead">Checking your password reset link…</p> : done ? (
         <div className="auth-switch">
           <button
             className="primary-button large"
@@ -423,6 +429,8 @@ export function ResetPasswordPage() {
             <ArrowRight size={19} />
           </button>
         </div>
+      ) : !isPasswordRecovery ? (
+        <div className="auth-switch"><p className="auth-error" role="alert">Your password reset session is missing or expired. Please request a new password reset link.</p><Link to="/forgot-password">Request a new reset link</Link><br /><Link to="/login">Back to Sign In</Link></div>
       ) : (
         <form className="login-form" onSubmit={submit} noValidate>
           <label htmlFor="new-password">New Password</label>
@@ -464,8 +472,8 @@ export function ResetPasswordPage() {
             </p>
           )}
 
-          <button className="primary-button large">
-            Update Password
+          <button className="primary-button large" disabled={busy}>
+            {busy ? "Updating…" : "Update Password"}
             <ArrowRight size={19} />
           </button>
         </form>

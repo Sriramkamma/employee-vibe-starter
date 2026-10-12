@@ -42,7 +42,7 @@ export type EmployeeCheckInRow = {
   checkInDate: string;
   submittedAt?: string;
   mood: number;
-  energy: number;
+  energy: number | null;
   workload: number;
   requestedSupport: boolean;
   /** Server-calculated score – NOT recalculated on the frontend */
@@ -80,7 +80,7 @@ type RawEmployeeCheckIn = {
   checkin_date: string;
   created_at: string;
   mood: number;
-  energy: number;
+  energy: number | null;
   workload: number;
   requested_support: boolean;
   sentiment_score: number | null;
@@ -130,7 +130,7 @@ async function loadEmployeeProfiles(organizationId: string) {
 }
 
 export async function fetchIndividualCheckIns(userId: string, fromDate: string, toDate: string): Promise<EmployeeCheckInRow[]> {
-  const data: Array<{ id: string; user_id: string; checkin_date: string; mood: number; energy: number; workload: number; requested_support: boolean; sentiment_score: number | null; answers: Record<string, unknown> | null }> = [];
+  const data: Array<{ id: string; user_id: string; checkin_date: string; mood: number; energy: number | null; workload: number; requested_support: boolean; sentiment_score: number | null; answers: Record<string, unknown> | null }> = [];
   for (let offset = 0; ; offset += 1000) {
     const { data: batch, error } = await supabase.from("check_ins")
       .select("id, user_id, checkin_date, mood, energy, workload, requested_support, sentiment_score, answers")
@@ -214,10 +214,10 @@ export async function fetchEmployeeCheckIns(
   }
 
   // 2. Build the check_ins query with date filters.
-  let query = supabase
-    .from("check_ins")
-    .select(
-      `
+  const checkIns: RawEmployeeCheckIn[] = [];
+  let totalCount = 0;
+  for (let idOffset = 0; idOffset < employeeIds.length; idOffset += 500) {
+    let query = supabase.from("check_ins").select(`
         id,
         user_id,
         checkin_date,
@@ -228,12 +228,8 @@ export async function fetchEmployeeCheckIns(
         requested_support,
         sentiment_score,
         answers
-      `,
-      { count: "exact" },
-    )
-    .in("user_id", employeeIds)
-    .order("checkin_date", { ascending: false })
-    .order("created_at", { ascending: false });
+      `, { count: "exact" }).in("user_id", employeeIds.slice(idOffset, idOffset + 500))
+      .order("checkin_date", { ascending: false }).order("created_at", { ascending: false });
 
   if (fromDate) {
     query = query.gte("checkin_date", fromDate);
@@ -242,21 +238,17 @@ export async function fetchEmployeeCheckIns(
     query = query.lte("checkin_date", toDate);
   }
 
-  const checkIns: RawEmployeeCheckIn[] = [];
-  let totalCount = 0;
-  let offset = 0;
-  const batchSize = 1000;
-  while (true) {
-    const { data, error, count } = await query.range(offset, offset + batchSize - 1);
-    if (error) {
-      console.error("Failed to fetch check-ins:", error);
-      throw new Error("Unable to load check-in records.");
+    let offset = 0;
+    const batchSize = 1000;
+    while (true) {
+      const { data, error, count } = await query.range(offset, offset + batchSize - 1);
+      if (error) { console.error("Failed to fetch check-ins:", error); throw new Error("Unable to load check-in records."); }
+      if (offset === 0) totalCount += count ?? 0;
+      const batch = data ?? [];
+      checkIns.push(...batch);
+      if (batch.length < batchSize) break;
+      offset += batchSize;
     }
-    if (offset === 0) totalCount = count ?? 0;
-    const batch = data ?? [];
-    checkIns.push(...batch);
-    if (batch.length < batchSize) break;
-    offset += batchSize;
   }
 
   const rows: EmployeeCheckInRow[] = (checkIns ?? []).map((row) => {
@@ -318,21 +310,18 @@ export async function fetchEmployeeSummary(
   if (!employeeIds.length) return { totalEmployees: profiles.length, totalCheckIns: 0, averageSentiment: 0, leadershipRequests: 0 };
   const totalEmployees = profiles.length;
 
-  let query = supabase
-    .from("check_ins")
-    .select("sentiment_score, requested_support")
-    .in("user_id", employeeIds);
-
-  if (fromDate) query = query.gte("checkin_date", fromDate);
-  if (toDate)   query = query.lte("checkin_date", toDate);
-
   const checkIns: Array<{ sentiment_score: number | null; requested_support: boolean }> = [];
-  for (let offset = 0; ; offset += 1000) {
-    const { data, error: checkInsError } = await query.range(offset, offset + 999);
-    if (checkInsError) { console.error("Failed to fetch employee summary check-ins:", checkInsError); throw new Error("Unable to load employee summary."); }
-    const batch = data ?? [];
-    checkIns.push(...batch);
-    if (batch.length < 1000) break;
+  for (let idOffset = 0; idOffset < employeeIds.length; idOffset += 500) {
+    let query = supabase.from("check_ins").select("sentiment_score, requested_support").in("user_id", employeeIds.slice(idOffset, idOffset + 500));
+    if (fromDate) query = query.gte("checkin_date", fromDate);
+    if (toDate) query = query.lte("checkin_date", toDate);
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error: checkInsError } = await query.range(offset, offset + 999);
+      if (checkInsError) { console.error("Failed to fetch employee summary check-ins:", checkInsError); throw new Error("Unable to load employee summary."); }
+      const batch = data ?? [];
+      checkIns.push(...batch);
+      if (batch.length < 1000) break;
+    }
   }
 
   const totalCheckIns = checkIns.length;

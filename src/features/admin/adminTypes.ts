@@ -37,7 +37,7 @@ export type TrendDataPoint = {
   date: string;
   sentiment: number;
   mood: number;
-  energy: number;
+  energy: number | null;
   workload: number;
   responseRate: number | null;
 };

@@ -8,7 +8,7 @@ export type CheckInRecord = {
   userId: string;
   userName: string;
   mood: number;
-  energy: number;
+  energy: number | null;
   workload: number;
   requestedSupport: boolean;
   sentimentScore: number;
@@ -18,7 +18,7 @@ export type CheckInRecord = {
 
 export type CheckInInput = Omit<
   CheckInRecord,
-  "id" | "date" | "submittedAt" | "sentimentScore"
+  "id" | "date" | "submittedAt" | "sentimentScore" | "energy"
 > & {
   answers?: Record<string, unknown> | null;
   leadershipMessage?: string | null;
@@ -103,12 +103,22 @@ export async function getRecentCheckInsForUser(userId: string, fromDate: string,
  * - Employees → their own check-ins
  * - Admins → organization check-ins
  */
-export async function getCheckIns(fromDate?: string, toDate?: string): Promise<CheckInRecord[]> {
-  const data: Array<{ id: string; user_id: string; checkin_date: string; created_at: string; mood: number; energy: number; workload: number; requested_support: boolean; sentiment_score: number; answers: Record<string, unknown> | null }> = [];
+export async function getCheckIns(fromDate?: string, toDate?: string, organizationId?: string): Promise<CheckInRecord[]> {
+  if (!organizationId) throw new Error("Organization scope is required to load analytics.");
+  const employeeProfiles: Array<{ id: string; full_name: string | null; first_name: string | null; last_name: string | null }> = [];
   for (let offset = 0; ; offset += 1000) {
-    let query = supabase
-      .from("check_ins")
-      .select(`
+    const { data, error } = await supabase.from("profiles").select("id,full_name,first_name,last_name").eq("organization_id", organizationId).eq("role", "employee").range(offset, offset + 999);
+    if (error) throw new Error("Unable to load organization employees for analytics.");
+    employeeProfiles.push(...(data ?? []));
+    if ((data ?? []).length < 1000) break;
+  }
+  const names = new Map(employeeProfiles.map((p) => [p.id, p.full_name || [p.first_name, p.last_name].filter(Boolean).join(" ") || "Employee"]));
+  const data: Array<{ id: string; user_id: string; checkin_date: string; created_at: string; mood: number; energy: number | null; workload: number; requested_support: boolean; sentiment_score: number; answers: Record<string, unknown> | null }> = [];
+  const employeeIds = employeeProfiles.map((profile) => profile.id);
+  for (let idOffset = 0; idOffset < employeeIds.length; idOffset += 500) {
+    const batchIds = employeeIds.slice(idOffset, idOffset + 500);
+    for (let offset = 0; ; offset += 1000) {
+      let query = supabase.from("check_ins").select(`
       id,
       user_id,
       checkin_date,
@@ -119,60 +129,25 @@ export async function getCheckIns(fromDate?: string, toDate?: string): Promise<C
       requested_support,
       sentiment_score,
       answers
-      `)
-      .order("checkin_date", { ascending: true });
-    if (fromDate) query = query.gte("checkin_date", fromDate);
-    if (toDate) query = query.lte("checkin_date", toDate);
-    const { data: batchData, error } = await query.range(offset, offset + 999);
-
-    if (error) {
-      console.error("Failed to fetch check-ins:", error);
-      throw new Error("Unable to load check-ins.");
+      `).in("user_id", batchIds).order("checkin_date", { ascending: true });
+      if (fromDate) query = query.gte("checkin_date", fromDate);
+      if (toDate) query = query.lte("checkin_date", toDate);
+      const { data: batchData, error } = await query.range(offset, offset + 999);
+      if (error) { console.error("Failed to fetch check-ins:", error); throw new Error("Unable to load check-ins."); }
+      const batch = batchData ?? [];
+      data.push(...batch);
+      if (batch.length < 1000) break;
     }
-    const batch = batchData ?? [];
-    data.push(...batch);
-    if (batch.length < 1000) break;
   }
 
   if (!data || data.length === 0) {
     return [];
   }
 
-  /*
-   * Fetch profile names separately.
-   * This avoids depending on a specific Supabase relationship name.
-   */
   const userIds = [...new Set(data.map((record) => record.user_id))];
 
-  const profiles: Array<{ id: string; full_name: string | null; first_name: string | null; last_name: string | null }> = [];
-  for (let offset = 0; offset < userIds.length; offset += 500) {
-    const { data: batch, error: profilesError } = await supabase.from("profiles").select("id,full_name,first_name,last_name").in("id", userIds.slice(offset, offset + 500));
-    if (profilesError) { console.error("Failed to fetch profile names:", profilesError); throw new Error("Unable to load profile names for check-ins."); }
-    profiles.push(...(batch ?? []));
-  }
-
-  const profileMap = new Map<
-    string,
-    {
-      full_name: string | null;
-      first_name: string | null;
-      last_name: string | null;
-    }
-  >();
-
-  for (const profile of profiles) {
-    profileMap.set(profile.id, profile);
-  }
-
   return data.map((record) => {
-    const profile = profileMap.get(record.user_id);
-
-    const userName =
-      profile?.full_name ||
-      [profile?.first_name, profile?.last_name]
-        .filter(Boolean)
-        .join(" ") ||
-      "Employee";
+    const userName = names.get(record.user_id) ?? "Employee";
 
     const rawAnswers = (record as { answers?: Record<string, unknown> | null }).answers ?? null;
     const leadershipMsg = (rawAnswers?.leadership_message as string | undefined) ?? null;
@@ -234,7 +209,6 @@ export async function saveCheckIn(
         user_id: user.id,
         checkin_date: today,
         mood: input.mood,
-        energy: input.energy,
         workload: input.workload,
         requested_support: input.requestedSupport,
         answers: answersPayload,
@@ -345,12 +319,13 @@ export function buildTrendData(
         (record) => ((record.mood - 1) / 4) * 100,
       ),
 
-      energy: average(
-        (record) => ((record.energy - 1) / 4) * 100,
-      ),
+      energy: (() => {
+        const energyRecords = dayRecords.filter((record) => Number.isFinite(record.energy));
+        return energyRecords.length ? Math.round(energyRecords.reduce((sum, record) => sum + ((((record.energy as number) - 1) / 4) * 100), 0) / energyRecords.length) : null;
+      })(),
 
       workload: average(
-        (record) => ((record.workload - 1) / 4) * 100,
+        (record) => normalizeWorkloadForSentiment(record.workload),
       ),
 
       responseRate: null,
@@ -361,3 +336,4 @@ export function buildTrendData(
     records.some((record) => record.date === point.date),
   );
 }
+import { normalizeWorkloadForSentiment } from "../../utils/workload";

@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, AlertTriangle, Bell, CalendarDays, RefreshCw, X } from "lucide-react";
 import { TrendChart } from "../../components/admin/TrendChart";
+import { normalizeWorkloadForSentiment } from "../../utils/workload";
 import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../features/auth/AuthContext";
 import type { CheckInRecord } from "../../features/checkin/checkInService";
 
 type Range = "today" | "yesterday" | "7d" | "30d" | "custom";
 type OverviewSignal = { id: string; type: string; status: string; severity: string; date: string; name: string; evidence: string; employeeId?: string; checkInId?: string };
-type DailyPoint = { date: string; sentiment: number; mood: number; energy: number; workload: number; responseRate: number | null };
+type DailyPoint = { date: string; sentiment: number; mood: number; energy: number | null; workload: number; responseRate: number | null };
 import {
   getBusinessDate,
   shiftBusinessDate,
@@ -66,17 +67,24 @@ export function AdminOverviewPage() {
       }
       if (!employeeIds.length) { setRecords([]); setSignals([]); setLeadershipRequests([]); return; }
       const rawRecords: Array<{ id: string; user_id: string; checkin_date: string; created_at: string; mood: number; energy: number; workload: number; requested_support: boolean; sentiment_score: number; answers: Record<string, unknown> | null }> = [];
-      for (let offset = 0; ; offset += 1000) {
-        const { data, error: checkInError } = await supabase.from("check_ins").select("id,user_id,checkin_date,created_at,mood,energy,workload,requested_support,sentiment_score,answers").in("user_id", employeeIds).gte("checkin_date", applied.from).lte("checkin_date", applied.to).order("checkin_date", { ascending: true }).range(offset, offset + 999);
-        if (checkInError) throw checkInError;
-        const batch = data ?? [];
-        rawRecords.push(...batch);
-        if (batch.length < 1000) break;
+      for (let idOffset = 0; idOffset < employeeIds.length; idOffset += 500) {
+        const ids = employeeIds.slice(idOffset, idOffset + 500);
+        for (let offset = 0; ; offset += 1000) {
+          const { data, error: checkInError } = await supabase.from("check_ins").select("id,user_id,checkin_date,created_at,mood,energy,workload,requested_support,sentiment_score,answers").in("user_id", ids).gte("checkin_date", applied.from).lte("checkin_date", applied.to).order("checkin_date", { ascending: true }).range(offset, offset + 999);
+          if (checkInError) throw checkInError;
+          const batch = data ?? [];
+          rawRecords.push(...batch);
+          if (batch.length < 1000) break;
+        }
       }
       const ids = [...new Set(rawRecords.map((r) => r.user_id))];
-      const { data: profiles, error: namesError } = ids.length ? await supabase.from("profiles").select("id,full_name,first_name,last_name").in("id", ids) : { data: [], error: null };
-      if (namesError) throw namesError;
-      const names = new Map((profiles ?? []).map((p) => [p.id, p.full_name || [p.first_name, p.last_name].filter(Boolean).join(" ") || "Employee"]));
+      const profiles: Array<{ id: string; full_name: string | null; first_name: string | null; last_name: string | null }> = [];
+      for (let offset = 0; offset < ids.length; offset += 500) {
+        const { data, error: namesError } = await supabase.from("profiles").select("id,full_name,first_name,last_name").in("id", ids.slice(offset, offset + 500));
+        if (namesError) throw namesError;
+        profiles.push(...(data ?? []));
+      }
+      const names = new Map(profiles.map((p) => [p.id, p.full_name || [p.first_name, p.last_name].filter(Boolean).join(" ") || "Employee"]));
       const checkInRecords = rawRecords.map((r) => ({ id: r.id, userId: r.user_id, userName: names.get(r.user_id) ?? "Employee", date: r.checkin_date, submittedAt: r.created_at, mood: r.mood, energy: r.energy, workload: r.workload, requestedSupport: r.requested_support, sentimentScore: r.sentiment_score, answers: r.answers, leadershipMessage: typeof r.answers?.leadership_message === "string" ? r.answers.leadership_message : null } as CheckInRecord));
       setRecords(checkInRecords);
 
@@ -91,11 +99,15 @@ export function AdminOverviewPage() {
         if (batch.length < 1000) break;
       }
       const signalUserIds = [...new Set(leadershipRows.map((s) => s.employee_id ?? s.target_id).filter(Boolean))];
-      const { data: signalProfiles, error: signalProfilesError } = signalUserIds.length ? await supabase.from("profiles").select("id,full_name,first_name,last_name").in("id", signalUserIds) : { data: [], error: null };
-      if (signalProfilesError) throw signalProfilesError;
-      const signalNames = new Map((signalProfiles ?? []).map((p) => [p.id, p.full_name || [p.first_name, p.last_name].filter(Boolean).join(" ") || "Employee"]));
+      const signalProfiles: Array<{ id: string; full_name: string | null; first_name: string | null; last_name: string | null }> = [];
+      for (let offset = 0; offset < signalUserIds.length; offset += 500) {
+        const { data, error: signalProfilesError } = await supabase.from("profiles").select("id,full_name,first_name,last_name").in("id", signalUserIds.slice(offset, offset + 500));
+        if (signalProfilesError) throw signalProfilesError;
+        signalProfiles.push(...(data ?? []));
+      }
+      const signalNames = new Map(signalProfiles.map((p) => [p.id, p.full_name || [p.first_name, p.last_name].filter(Boolean).join(" ") || "Employee"]));
       setSignals(leadershipRows.map((s) => ({ id: s.id, type: "leadership_request", status: s.status, severity: s.severity ?? "medium", date: s.date_detected ?? s.created_at ?? "", name: signalNames.get(s.employee_id ?? s.target_id) ?? s.target_name ?? "Employee", evidence: s.evidence ?? s.description ?? "" })));
-      setLeadershipRequests(leadershipRows.map((s) => ({ id: s.id, type: "leadership_request", status: s.status, severity: s.severity ?? "medium", date: s.date_detected ?? s.created_at ?? "", employeeId: s.employee_id ?? s.target_id, checkInId: s.check_in_id ?? s.checkin_id ?? s.source_checkin_id ?? s.source_check_in_id ?? s.metadata?.check_in_id ?? s.metadata?.checkin_id ?? s.metadata?.source_checkin_id, name: signalNames.get(s.employee_id ?? s.target_id) ?? s.target_name ?? "Employee", evidence: "The employee requested a leadership team follow-up." })));
+      setLeadershipRequests(leadershipRows.map((s) => ({ id: s.id, type: "leadership_request", status: s.status, severity: s.severity ?? "medium", date: s.date_detected ?? s.created_at ?? "", employeeId: s.employee_id ?? s.target_id, checkInId: s.check_in_id ?? s.checkin_id ?? s.source_checkin_id ?? s.source_check_in_id ?? s.check_in_ref ?? s.metadata?.check_in_id ?? s.metadata?.checkin_id ?? s.metadata?.source_checkin_id ?? s.metadata?.source_check_in_id ?? s.metadata?.check_in_ref, name: signalNames.get(s.employee_id ?? s.target_id) ?? s.target_name ?? "Employee", evidence: "The employee requested a leadership team follow-up." })));
     } catch (e) {
       console.error("Failed to load admin overview", e);
       setError("We couldn't load dashboard data. Check your connection and try again.");
@@ -108,7 +120,7 @@ export function AdminOverviewPage() {
     const grouped = new Map<string, CheckInRecord[]>();
     records.forEach((r) => grouped.set(r.date, [...(grouped.get(r.date) ?? []), r]));
     return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, rows]) => ({
-      date, sentiment: avg(rows.map((r) => r.sentimentScore)), mood: avg(rows.map((r) => ((r.mood - 1) / 4) * 100)), energy: avg(rows.map((r) => ((r.energy - 1) / 4) * 100)), workload: avg(rows.map((r) => ((5 - r.workload) / 4) * 100)), responseRate: null,
+      date, sentiment: avg(rows.map((r) => r.sentimentScore)), mood: avg(rows.map((r) => ((r.mood - 1) / 4) * 100)), energy: rows.some((r) => Number.isFinite(r.energy)) ? avg(rows.filter((r) => Number.isFinite(r.energy)).map((r) => ((r.energy! - 1) / 4) * 100)) : null, workload: avg(rows.map((r) => normalizeWorkloadForSentiment(r.workload))), responseRate: null,
     }));
   }, [records]);
   
@@ -137,13 +149,14 @@ export function AdminOverviewPage() {
     setLeadershipDetailLoading(true); setLeadershipDetailError(false);
     setSelectedLeadershipRequest({ name: signal.name, date, message: null, signalId: signal.id });
     try {
+      if (!signal.employeeId) throw new Error("Signal has no employee relationship");
       let query = supabase.from("check_ins").select("id,user_id,checkin_date,requested_support,answers,created_at").eq("requested_support", true);
       if (signal.checkInId) query = query.eq("id", signal.checkInId);
       else query = query.eq("user_id", signal.employeeId).eq("checkin_date", date);
       const { data, error: checkInError } = await query.order("created_at", { ascending: false }).limit(signal.checkInId ? 1 : 2);
       if (checkInError) throw checkInError;
       const exact = data?.length === 1 ? data[0] : null;
-      if (!exact || exact.user_id !== signal.employeeId || exact.checkin_date !== date) throw new Error("No unique check-in match");
+      if (!exact || exact.user_id !== signal.employeeId || (!signal.checkInId && exact.checkin_date !== date)) throw new Error("No unique check-in match");
       const answers = exact.answers as Record<string, unknown> | null;
       setSelectedLeadershipRequest({ name: signal.name, date: exact.checkin_date, message: typeof answers?.leadership_message === "string" ? answers.leadership_message : null, signalId: signal.id });
     } catch {
@@ -179,8 +192,8 @@ export function AdminOverviewPage() {
       </>}
     </div>
     {selectedLeadershipRequest && <div className="vibe-modal-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !notingSignalId) setSelectedLeadershipRequest(null); }}><section className="vibe-modal-panel leadership-message-modal" role="dialog" aria-modal="true" aria-labelledby="leadership-request-title"><header className="vibe-modal-header"><h2 id="leadership-request-title" className="vibe-modal-title">Leadership Request</h2><button className="icon-button" aria-label="Close" disabled={Boolean(notingSignalId)} onClick={() => setSelectedLeadershipRequest(null)}><X size={18} /></button></header><div className="vibe-modal-body"><p className="leadership-message-byline">{selectedLeadershipRequest.name} - {humanDate(selectedLeadershipRequest.date)}</p>{leadershipDetailLoading ? <p role="status">Loading message...</p> : <section className="vibe-modal-msg-container"><strong>Message to Leadership</strong><p className="vibe-modal-msg-text">{selectedLeadershipRequest.message?.trim() ? selectedLeadershipRequest.message : "No message was provided."}</p></section>}{noteError && <p className="emp-filter-error" role="alert">{noteError}</p>}</div><footer className="vibe-modal-footer"><button className="secondary-button" disabled={leadershipDetailLoading || !selectedRequestSignal || notingSignalId === selectedLeadershipRequest.signalId} onClick={() => selectedRequestSignal && void noteLeadershipRequest(selectedRequestSignal)}>{notingSignalId === selectedLeadershipRequest.signalId ? "Saving..." : "Noted"}</button><button className="secondary-button" disabled={Boolean(notingSignalId)} onClick={() => setSelectedLeadershipRequest(null)}>Close</button></footer></section></div>}
-    {leadershipDetailError && <div className="vibe-modal-overlay"><section className="vibe-modal-panel" role="dialog" aria-modal="true"><header className="vibe-modal-header"><h2 className="vibe-modal-title">Unable to load this leadership request message.</h2><button className="icon-button" aria-label="Close" onClick={() => setLeadershipDetailError(false)}><X size={18} /></button></header><div className="vibe-modal-body"><button className="primary-button" onClick={() => setLeadershipDetailError(false)}>Close</button></div></section></div>}
-    {selectedCheckIn && <div className="vibe-modal-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedCheckIn(null); }}><section className="vibe-modal-panel" role="dialog" aria-modal="true" aria-labelledby="checkin-modal-title"><header className="vibe-modal-header"><div><span className="vibe-modal-badge">Employee Check-in</span><h2 id="checkin-modal-title" className="vibe-modal-title">{selectedCheckIn.userName}</h2></div><button className="icon-button" aria-label="Close" onClick={() => setSelectedCheckIn(null)}><X size={18} /></button></header><div className="vibe-modal-body"><div className="vibe-modal-meta-grid"><div className="vibe-modal-meta-item"><span className="vibe-modal-meta-label">Check-in Date</span><strong className="vibe-modal-meta-val">{humanDate(selectedCheckIn.date)}</strong></div><div className="vibe-modal-meta-item"><span className="vibe-modal-meta-label">Sentiment Score</span><strong className={`vibe-modal-meta-val ${selectedCheckIn.sentimentScore < 40 ? "low-score" : ""}`}>{selectedCheckIn.sentimentScore} / 100</strong></div></div><div className="checkin-answer-list"><div><strong>How are you feeling today?</strong><span>{answerLabel("mood", selectedCheckIn.mood)}</span></div><div><strong>How is your energy at the end of today?</strong><span>{answerLabel("energy", selectedCheckIn.energy)}</span></div><div><strong>How did your work pressure feel today?</strong><span>{answerLabel("workload", selectedCheckIn.workload)}</span></div><div><strong>Would you like someone from the leadership team to reach out to you?</strong><span>{String(selectedCheckIn.answers?.leadership_request ?? (selectedCheckIn.requestedSupport ? "Yes, please" : "Not right now"))}</span></div></div>{selectedCheckIn.requestedSupport && <section className="vibe-modal-msg-container"><strong>Message to Leadership</strong><p className="vibe-modal-msg-text">{selectedCheckIn.leadershipMessage?.trim() || "No additional message was provided."}</p></section>}</div></section></div>}
+    {leadershipDetailError && <div className="vibe-modal-overlay"><section className="vibe-modal-panel" role="dialog" aria-modal="true"><header className="vibe-modal-header"><h2 className="vibe-modal-title">Unable to load the originating check-in for this leadership request.</h2><button className="icon-button" aria-label="Close" onClick={() => setLeadershipDetailError(false)}><X size={18} /></button></header><div className="vibe-modal-body"><button className="primary-button" onClick={() => setLeadershipDetailError(false)}>Close</button></div></section></div>}
+    {selectedCheckIn && <div className="vibe-modal-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedCheckIn(null); }}><section className="vibe-modal-panel" role="dialog" aria-modal="true" aria-labelledby="checkin-modal-title"><header className="vibe-modal-header"><div><span className="vibe-modal-badge">Employee Check-in</span><h2 id="checkin-modal-title" className="vibe-modal-title">{selectedCheckIn.userName}</h2></div><button className="icon-button" aria-label="Close" onClick={() => setSelectedCheckIn(null)}><X size={18} /></button></header><div className="vibe-modal-body"><div className="vibe-modal-meta-grid"><div className="vibe-modal-meta-item"><span className="vibe-modal-meta-label">Check-in Date</span><strong className="vibe-modal-meta-val">{humanDate(selectedCheckIn.date)}</strong></div><div className="vibe-modal-meta-item"><span className="vibe-modal-meta-label">Sentiment Score</span><strong className={`vibe-modal-meta-val ${selectedCheckIn.sentimentScore < 40 ? "low-score" : ""}`}>{selectedCheckIn.sentimentScore} / 100</strong></div></div><div className="checkin-answer-list"><div><strong>How are you feeling today?</strong><span>{answerLabel("mood", selectedCheckIn.mood)}</span></div><div><strong>How is your energy at the end of today?</strong><span>{selectedCheckIn.energy == null ? "Not collected" : answerLabel("energy", selectedCheckIn.energy)}</span></div><div><strong>How did your work pressure feel today?</strong><span>{answerLabel("workload", selectedCheckIn.workload)}</span></div><div><strong>Would you like someone from the leadership team to reach out to you?</strong><span>{String(selectedCheckIn.answers?.leadership_request ?? (selectedCheckIn.requestedSupport ? "Yes, please" : "Not right now"))}</span></div></div>{selectedCheckIn.requestedSupport && <section className="vibe-modal-msg-container"><strong>Message to Leadership</strong><p className="vibe-modal-msg-text">{selectedCheckIn.leadershipMessage?.trim() || "No additional message was provided."}</p></section>}</div></section></div>}
     {!selectedCheckIn && detailError && <div className="vibe-modal-overlay"><section className="vibe-modal-panel" role="dialog" aria-modal="true"><header className="vibe-modal-header"><h2 className="vibe-modal-title">Unable to load this check-in.</h2><button className="icon-button" aria-label="Close" onClick={() => setDetailError(false)}><X size={18} /></button></header><div className="vibe-modal-body"><button className="primary-button" onClick={() => setDetailError(false)}>Close</button></div></section></div>}  </>;
 }
 

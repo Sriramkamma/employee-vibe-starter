@@ -2,7 +2,7 @@ export type CheckInRecord = {
   date: string; // YYYY-MM-DD
   userId: string;
   mood: number; // 1-5
-  energy: number; // 1-5
+  energy: number | null; // null identifies records collected after Energy removal
   workload: number; // 1-5
 };
 
@@ -18,18 +18,19 @@ export function normalizeScore(value: number): number {
 }
 
 /**
- * Calculates a weighted sentiment score based on mood, energy, and workload.
- * Mood is primary, energy is secondary, workload is tertiary (inverted because high workload is stressful).
- * Example weightings (configurable):
- * Mood: 50%
- * Energy: 30%
- * Workload: 20% (inverted)
+ * Uses the original score for historical four-answer rows and the approved
+ * 5:2 Mood-to-inverted-Workload ratio for new rows without Energy.
  */
-export function calculateSentiment(mood: number, energy: number, workload: number): number {
+export function calculateSentiment(mood: number, energy: number | null, workload: number): number {
   const normalizedMood = normalizeScore(mood);
-  const normalizedEnergy = normalizeScore(energy);
   // Workload is inverted (1 comfortable -> 100 score, 5 overwhelming -> 0 score)
   const normalizedWorkload = 100 - normalizeScore(workload);
+
+  if (energy === null) {
+    return Math.round(((normalizedMood * 5 + normalizedWorkload * 2) / 7) * 100) / 100;
+  }
+
+  const normalizedEnergy = normalizeScore(energy);
 
   const weightedScore = normalizedMood * 0.5 + normalizedEnergy * 0.3 + normalizedWorkload * 0.2;
   return Math.round(weightedScore);
